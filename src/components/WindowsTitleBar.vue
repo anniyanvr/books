@@ -1,48 +1,133 @@
 <template>
-  <div class="bg-white text-base flex justify-between window-drag border-b">
+  <div
+    class="
+      relative
+      window-drag
+      flex
+      items-center
+      border-b
+      dark:bg-gray-900
+      text-gray-900
+      dark:text-gray-100
+      border-gray-100
+      dark:border-gray-800
+    "
+    style="height: 28px"
+  >
+    <Fb class="ms-2" />
+    <p v-if="companyName && dbPath" class="mx-auto text-sm">
+      {{ companyName }} - {{ dbPath }}
+    </p>
     <div
-      class="py-1 px-2 window-no-drag hover:bg-gray-100 cursor-pointer"
-      @click="openMenu"
+      v-if="!isFullscreen"
+      class="absolute window-no-drag flex h-full items-center right-0"
     >
-      <feather-icon name="menu" class="w-4 h-4" />
-    </div>
-    <div class="flex window-no-drag">
       <div
-        class="py-1 px-2 hover:bg-gray-100 cursor-pointer"
-        @click="action('minimize')"
+        class="
+          flex
+          items-center
+          px-4
+          h-full
+          hover:bg-gray-300
+          dark:hover:bg-gray-875
+        "
+        @click="minimizeWindow"
       >
-        <feather-icon name="minus" class="w-4 h-4" />
+        <feather-icon name="minus" class="h-4 w-4 flex-shrink-0" />
       </div>
       <div
-        class="flex-center py-1 px-2 hover:bg-gray-100 cursor-pointer"
-        @click="action('maximize')"
+        class="
+          flex
+          items-center
+          px-4
+          h-full
+          hover:bg-gray-300
+          dark:hover:bg-gray-875
+        "
+        @click="toggleMaximize"
       >
-        <feather-icon name="square" class="w-3 h-3" />
+        <feather-icon
+          v-if="isMax"
+          name="minimize"
+          class="h-3 w-3 flex-shrink-0"
+        />
+        <feather-icon v-else name="square" class="h-3 w-3 flex-shrink-0" />
       </div>
       <div
-        class="py-1 px-2 hover:bg-red-500 hover:text-white cursor-pointer"
-        @click="action('close')"
+        class="flex items-center px-4 h-full hover:bg-red-600 hover:text-white"
+        @click="closeWindow"
       >
-        <feather-icon name="x" class="w-4 h-4" />
+        <feather-icon name="x" class="h-4 w-4 flex-shrink-0" />
       </div>
     </div>
   </div>
 </template>
 
 <script>
-import { ipcRenderer } from 'electron';
-import { runWindowAction } from '@/utils';
-import { IPC_MESSAGES } from '@/messages';
+import Fb from './Icons/18/fb.vue';
 
 export default {
   name: 'WindowsTitleBar',
+  components: { Fb },
+  props: {
+    dbPath: String,
+    companyName: String,
+  },
+  data() {
+    return {
+      isMax: Boolean,
+      isFullscreen: Boolean,
+    };
+  },
+  mounted() {
+    this.getIsMaximized();
+    this.getIsFullscreen();
+    window.addEventListener('resize', this.getIsFullscreen);
+    document.addEventListener('webkitfullscreenchange', this.getIsFullscreen);
+    document.addEventListener('mozfullscreenchange', this.getIsFullscreen);
+    document.addEventListener('fullscreenchange', this.getIsFullscreen);
+    document.addEventListener('MSFullscreenChange', this.getIsFullscreen);
+  },
+  destroyed() {
+    window.removeEventListener('resize', this.getIsFullscreen);
+    document.removeEventListener(
+      'webkitfullscreenchange',
+      this.getIsFullscreen
+    );
+    document.removeEventListener('mozfullscreenchange', this.getIsFullscreen);
+    document.removeEventListener('fullscreenchange', this.getIsFullscreen);
+    document.removeEventListener('MSFullscreenChange', this.getIsFullscreen);
+  },
   methods: {
-    async action(name) {
-      const actionRan = await runWindowAction(name);
-      this.$emit(actionRan);
+    minimizeWindow() {
+      ipc.minimizeWindow();
     },
-    openMenu() {
-      ipcRenderer.send(IPC_MESSAGES.OPEN_MENU);
+    toggleMaximize() {
+      ipc.toggleMaximize();
+      this.getIsMaximized();
+    },
+    closeWindow() {
+      ipc.closeWindow();
+    },
+    getIsMaximized() {
+      ipc
+        .isMaximized()
+        .then((result) => {
+          this.isMax = result;
+        })
+        .catch((error) => {
+          console.error(error);
+        });
+    },
+    getIsFullscreen() {
+      ipc
+        .isFullscreen()
+        .then((result) => {
+          this.isFullscreen = result;
+        })
+        .catch((error) => {
+          console.error(error);
+        });
     },
   },
 };

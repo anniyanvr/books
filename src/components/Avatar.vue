@@ -8,7 +8,18 @@
     />
     <div
       v-else
-      class="bg-gray-500 flex h-full items-center justify-center text-white w-full text-base uppercase"
+      class="
+        bg-gray-500
+        flex
+        h-full
+        items-center
+        justify-center
+        text-white
+        dark:text-gray-900
+        w-full
+        text-base
+        uppercase
+      "
     >
       {{ label && label[0] }}
     </div>
@@ -22,17 +33,17 @@ export default {
     imageURL: String,
     label: String,
     size: {
-      default: 'md'
-    }
+      default: 'md',
+    },
   },
   computed: {
     sizeClasses() {
       return {
         sm: 'w-5 h-5',
         md: 'w-7 h-7',
-        lg: 'w-9 h-9'
+        lg: 'w-9 h-9',
       }[this.size];
-    }
-  }
+    },
+  },
 };
 </script>

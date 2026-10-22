@@ -1,111 +1,280 @@
 <template>
   <div class="flex flex-col">
-    <PageHeader>
-      <h1 slot="title" class="text-2xl font-bold" v-if="title">{{ title }}</h1>
-      <template slot="actions">
-        <FilterDropdown
-          ref="filterDropdown"
-          @change="applyFilter"
-          :fields="meta.fields"
-        />
-        <Button class="ml-2" :icon="true" type="primary" @click="makeNewDoc">
-          <feather-icon name="plus" class="w-4 h-4 text-white" />
-        </Button>
-        <SearchBar class="ml-2" />
-      </template>
-    </PageHeader>
-    <div class="flex-1 flex h-full">
-      <List
-        ref="list"
-        :listConfig="listConfig"
-        :filters="filters"
-        class="flex-1"
-        @makeNewDoc="makeNewDoc"
+    <PageHeader :title="title">
+      <Button
+        v-if="
+          schemaName === 'Item' &&
+          (!isSelectionMode || (isSelectionMode && selectedItems.length === 0))
+        "
+        @click="toggleSelectionMode"
+      >
+        {{ t`Select` }}
+      </Button>
+      <div
+        v-if="
+          isSelectionMode && schemaName === 'Item' && selectedItems.length > 0
+        "
+        class="relative"
+      >
+        <Button class="w-40" @click="toggleDropdown"> Create </Button>
+        <div
+          v-if="showDropdown"
+          class="
+            absolute
+            top-full
+            mt-1
+            bg-white
+            border border-gray-300
+            rounded
+            shadow-lg
+            z-10
+            w-40
+          "
+        >
+          <div
+            v-for="option in actionOptions"
+            :key="option.value"
+            class="px-4 py-2 hover:bg-gray-100 cursor-pointer text-sm"
+            @click="createInvoice(option.value)"
+          >
+            {{ option.label }}
+          </div>
+        </div>
+      </div>
+      <Button ref="exportButton" :icon="false" @click="openExportModal = true">
+        {{ t`Export` }}
+      </Button>
+      <FilterDropdown
+        ref="filterDropdown"
+        :schema-name="schemaName"
+        @change="applyFilter"
       />
-    </div>
+      <Button
+        v-if="canCreate"
+        ref="makeNewDocButton"
+        :icon="true"
+        type="primary"
+        :padding="false"
+        class="px-3"
+        @click="handleMakeNewDoc"
+      >
+        <feather-icon name="plus" class="w-4 h-4" />
+      </Button>
+    </PageHeader>
+    <List
+      ref="list"
+      :schema-name="schemaName"
+      :list-config="listConfig"
+      :filters="filters"
+      :can-create="canCreate"
+      :is-selection-mode="isSelectionMode"
+      class="flex-1 flex h-full"
+      @open-doc="openDoc"
+      @updated-data="updatedData"
+      @make-new-doc="makeNewDoc"
+      @selected-items-changed="updateSelectedItems"
+    />
+    <Modal :open-modal="openExportModal" @closemodal="openExportModal = false">
+      <ExportWizard
+        class="w-form"
+        :schema-name="schemaName"
+        :title="pageTitle"
+        :list-filters="listFilters"
+      />
+    </Modal>
   </div>
 </template>
-<script>
-import frappe from 'frappejs';
-// import Observable from 'frappejs/utils/observable';
-import PageHeader from '@/components/PageHeader';
-import Button from '@/components/Button';
-import SearchBar from '@/components/SearchBar';
-import List from './List';
-import listConfigs from './listConfig';
-// import Icon from '@/components/Icon';
-import FilterDropdown from '@/components/FilterDropdown';
-import { routeTo } from '@/utils'
+<script lang="ts">
+import { Field } from 'schemas/types';
+import Button from 'src/components/Button.vue';
+import ExportWizard from 'src/components/ExportWizard.vue';
+import FilterDropdown from 'src/components/FilterDropdown.vue';
+import Modal from 'src/components/Modal.vue';
+import PageHeader from 'src/components/PageHeader.vue';
 
-export default {
+import { fyo } from 'src/initFyo';
+import { shortcutsKey } from 'src/utils/injectionKeys';
+import {
+  docsPathMap,
+  getCreateFiltersFromListViewFilters,
+} from 'src/utils/misc';
+import { docsPathRef } from 'src/utils/refs';
+import { getFormRoute, routeTo } from 'src/utils/ui';
+import { QueryFilter } from 'utils/db/types';
+import { defineComponent, inject, ref } from 'vue';
+import List from './List.vue';
+import { Money } from 'pesa';
+import { ModelNameEnum } from 'models/types';
+
+export default defineComponent({
   name: 'ListView',
-  props: ['doctype', 'filters'],
   components: {
     PageHeader,
     List,
     Button,
-    SearchBar,
-    // Icon,
-    FilterDropdown
+    FilterDropdown,
+    Modal,
+    ExportWizard,
   },
-  activated() {
-    if (typeof this.filters === 'object') {
-      this.$refs.filterDropdown.setFilter(this.filters);
-    }
+  props: {
+    schemaName: { type: String, required: true },
+    filters: { type: Object, default: undefined },
+    pageTitle: { type: String, default: '' },
   },
-  methods: {
-    async makeNewDoc() {
-      const doctype = this.listConfig.doctype;
-      const doc = await frappe.getNewDoc(doctype);
-      if (this.listConfig.filters) {
-        doc.set(this.listConfig.filters);
-      }
-      if (this.filters) {
-        doc.set(this.filters);
-      }
-      let path = this.getFormPath(doc.name);
-      routeTo(path);
-      doc.on('afterInsert', () => {
-        let path = this.getFormPath(doc.name);
-        this.$router.replace(path);
-      });
-    },
-    applyFilter(filters) {
-      this.$refs.list.updateData(filters);
-    },
-    getFormPath(name) {
-      if (this.listConfig.formRoute) {
-        let path = this.listConfig.formRoute(name);
-        return path;
-      }
-      return {
-        path: `/list/${this.doctype}`,
-        query: {
-          edit: 1,
-          doctype: this.doctype,
-          name
-        }
-      };
-    }
+  setup() {
+    return {
+      shortcuts: inject(shortcutsKey),
+      list: ref<InstanceType<typeof List> | null>(null),
+      makeNewDocButton: ref<InstanceType<typeof Button> | null>(null),
+      exportButton: ref<InstanceType<typeof Button> | null>(null),
+      filterDropdown: ref<InstanceType<typeof FilterDropdown> | null>(null),
+    };
+  },
+  data() {
+    return {
+      listConfig: undefined,
+      openExportModal: false,
+      listFilters: {},
+      isSelectionMode: false,
+      showDropdown: false,
+      selectedItems: [] as string[],
+    } as {
+      listConfig: undefined | ReturnType<typeof getListConfig>;
+      openExportModal: boolean;
+      listFilters: QueryFilter;
+      isSelectionMode: boolean;
+      showDropdown: boolean;
+      selectedItems: string[];
+    };
   },
   computed: {
-    meta() {
-      return frappe.getMeta(this.doctype);
+    context(): string {
+      return 'ListView-' + this.schemaName;
     },
-    listConfig() {
-      if (listConfigs[this.doctype]) {
-        return listConfigs[this.doctype];
-      } else {
-        return {
-          title: this.doctype,
-          doctype: this.doctype,
-          columns: this.meta.getKeywordFields()
-        };
+    title(): string {
+      if (this.pageTitle) {
+        return this.pageTitle;
+      }
+
+      return fyo.schemaMap[this.schemaName]?.label ?? this.schemaName;
+    },
+    fields(): Field[] {
+      return fyo.schemaMap[this.schemaName]?.fields ?? [];
+    },
+    canCreate(): boolean {
+      return fyo.schemaMap[this.schemaName]?.create !== false;
+    },
+    actionOptions(): { value: string; label: string }[] {
+      return [
+        { value: 'SalesQuote', label: 'Sales Quote' },
+        { value: 'SalesInvoice', label: 'Sales Invoice' },
+        { value: 'PurchaseInvoice', label: 'Purchase Invoice' },
+      ];
+    },
+  },
+  activated() {
+    this.listConfig = getListConfig(this.schemaName);
+    docsPathRef.value =
+      docsPathMap[this.schemaName] ?? docsPathMap.Entries ?? '';
+
+    if (this.fyo.store.isDevelopment) {
+      // @ts-ignore
+      window.lv = this;
+    }
+
+    this.setShortcuts();
+  },
+  deactivated() {
+    docsPathRef.value = '';
+    this.shortcuts?.delete(this.context);
+  },
+  methods: {
+    setShortcuts() {
+      if (!this.shortcuts) {
+        return;
+      }
+
+      this.shortcuts.pmod.set(this.context, ['KeyN'], () =>
+        this.makeNewDocButton?.$el.click()
+      );
+      this.shortcuts.pmod.set(this.context, ['KeyE'], () =>
+        this.exportButton?.$el.click()
+      );
+    },
+    updatedData(listFilters: QueryFilter) {
+      this.listFilters = listFilters;
+    },
+    async openDoc(name: string) {
+      const route = getFormRoute(this.schemaName, name);
+      await routeTo(route);
+    },
+    async makeNewDoc() {
+      if (!this.canCreate) {
+        return;
+      }
+
+      const filters = getCreateFiltersFromListViewFilters(this.filters ?? {});
+      const doc = fyo.doc.getNewDoc(this.schemaName, filters);
+      const route = getFormRoute(this.schemaName, doc.name!);
+      await routeTo(route);
+    },
+    async handleMakeNewDoc() {
+      await this.makeNewDoc();
+    },
+    applyFilter(filters: QueryFilter) {
+      this.list?.updateData(filters);
+    },
+    toggleSelectionMode() {
+      this.isSelectionMode = !this.isSelectionMode;
+      if (!this.isSelectionMode) {
+        this.showDropdown = false;
+        this.selectedItems = [];
       }
     },
-    title() {
-      return this.listConfig.title || this.doctype;
-    }
+    toggleDropdown() {
+      this.showDropdown = !this.showDropdown;
+    },
+    async createInvoice(value: string) {
+      if (
+        value === ModelNameEnum.SalesQuote ||
+        value === ModelNameEnum.SalesInvoice ||
+        value === ModelNameEnum.PurchaseInvoice
+      ) {
+        const doc = fyo.doc.getNewDoc(value);
+
+        for (const itemName of this.selectedItems) {
+          const itemDoc = await fyo.doc.getDoc('Item', itemName);
+
+          const itemRow = {
+            item: itemName,
+            rate: (itemDoc.rate as Money) || fyo.pesa(0),
+            quantity: 1,
+          };
+
+          await doc.append('items', itemRow);
+        }
+
+        const route = getFormRoute(value, doc.name!);
+        await routeTo(route);
+        this.selectedItems = [];
+        this.isSelectionMode = false;
+        this.showDropdown = false;
+      }
+    },
+
+    updateSelectedItems(selected: string[]) {
+      this.selectedItems = selected;
+    },
+  },
+});
+
+function getListConfig(schemaName: string) {
+  const listConfig = fyo.models[schemaName]?.getListViewSettings?.(fyo);
+  if (listConfig?.columns === undefined) {
+    return {
+      columns: ['name'],
+    };
   }
-};
+  return listConfig;
+}
 </script>

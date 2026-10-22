@@ -4,82 +4,117 @@
     :hide-arrow="true"
     :placement="right ? 'bottom-end' : 'bottom-start'"
   >
-    <div
-      slot="target"
-      class="h-full"
-      v-on-outside-click="() => (isShown = false)"
-    >
-      <slot
-        :toggleDropdown="toggleDropdown"
-        :highlightItemUp="highlightItemUp"
-        :highlightItemDown="highlightItemDown"
-        :selectHighlightedItem="selectHighlightedItem"
-      ></slot>
-    </div>
-    <div slot="content" class="z-10 bg-white rounded w-full min-w-40">
-      <div class="p-1 max-h-64 overflow-auto text-sm">
-        <div v-if="isLoading" class="p-2 text-gray-600">
-          {{ _('Loading...') }}
-        </div>
-        <template v-else>
-          <div v-for="d in dropdownItems" :key="d.label">
-            <div
-              v-if="d.isGroup"
-              class="
-                px-2
-                pt-3
-                pb-1
-                text-xs
-                uppercase
-                text-gray-700
-                font-semibold
-                tracking-wider
-              "
-            >
-              {{ d.label }}
-            </div>
-            <a
-              v-else
-              ref="items"
-              class="
-                block
-                p-2
-                rounded-md
-                mt-1
-                first:mt-0
-                cursor-pointer
-                truncate
-              "
-              :class="d.index === highlightedIndex ? 'bg-gray-100' : ''"
-              @mouseenter="highlightedIndex = d.index"
-              @mouseleave="highlightedIndex = -1"
-              @mousedown.prevent
-              @click="selectItem(d)"
-            >
-              <component :is="d.component" v-if="d.component" />
-              <template v-else>{{ d.label }}</template>
-            </a>
-          </div>
-        </template>
+    <template #target>
+      <div v-on-outside-click="() => (isShown = false)" class="h-full">
+        <slot
+          :toggle-dropdown="toggleDropdown"
+          :highlight-item-up="highlightItemUp"
+          :highlight-item-down="highlightItemDown"
+          :select-highlighted-item="selectHighlightedItem"
+        ></slot>
       </div>
-    </div>
+    </template>
+    <template #content>
+      <div
+        class="
+          bg-white
+          dark:bg-gray-850 dark:text-white
+          rounded
+          w-full
+          min-w-40
+          overflow-hidden
+        "
+      >
+        <div
+          class="
+            p-1
+            max-h-64
+            overflow-auto
+            custom-scroll custom-scroll-thumb2
+            text-sm
+          "
+        >
+          <div
+            v-if="isLoading"
+            class="p-2 text-gray-600 dark:text-gray-400 italic"
+          >
+            {{ t`Loading...` }}
+          </div>
+          <div
+            v-else-if="dropdownItems.length === 0"
+            class="p-2 text-gray-600 dark:text-gray-400 italic"
+          >
+            {{ getEmptyMessage() }}
+          </div>
+          <template v-else>
+            <div
+              v-for="(d, index) in dropdownItems"
+              :key="`key-${index}`"
+              ref="items"
+            >
+              <div
+                v-if="d.isGroup"
+                class="
+                  px-2
+                  pt-3
+                  pb-1
+                  text-xs
+                  uppercase
+                  text-gray-700
+                  dark:text-gray-400
+                  font-semibold
+                  tracking-wider
+                "
+              >
+                {{ d.label }}
+              </div>
+              <a
+                v-else
+                class="
+                  block
+                  p-2
+                  rounded-md
+                  mt-1
+                  first:mt-0
+                  cursor-pointer
+                  truncate
+                "
+                :class="
+                  index === highlightedIndex
+                    ? 'bg-gray-100 dark:bg-gray-875'
+                    : ''
+                "
+                @mouseenter="highlightedIndex = index"
+                @mousedown.prevent
+                @click="selectItem(d)"
+              >
+                <component :is="d.component" v-if="d.component" />
+                <template v-else>{{ d.label }}</template>
+              </a>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
   </Popover>
 </template>
+<script lang="ts">
+import { Doc } from 'fyo/model/doc';
+import { Field } from 'schemas/types';
+import { fyo } from 'src/initFyo';
+import { DropdownItem } from 'src/utils/types';
+import { defineComponent, PropType } from 'vue';
+import Popover from './Popover.vue';
 
-<script>
-import Popover from './Popover';
-import uniq from 'lodash/uniq';
-
-export default {
+export default defineComponent({
   name: 'Dropdown',
+  components: {
+    Popover,
+  },
   props: {
     items: {
-      type: Array,
+      type: Array as PropType<DropdownItem[]>,
       default: () => [],
-    },
-    groups: {
-      type: Array,
-      default: null,
     },
     right: {
       type: Boolean,
@@ -89,9 +124,14 @@ export default {
       type: Boolean,
       default: false,
     },
-  },
-  components: {
-    Popover,
+    df: {
+      type: Object as PropType<Field | null>,
+      default: null,
+    },
+    doc: {
+      type: Object as PropType<Doc | null>,
+      default: null,
+    },
   },
   data() {
     return {
@@ -100,106 +140,126 @@ export default {
     };
   },
   computed: {
-    sortedGroups() {
-      if (Array.isArray(this.groups)) {
-        return this.groups;
+    dropdownItems(): DropdownItem[] {
+      const groupedItems = getGroupedItems(this.items ?? []);
+      const groupNames = Object.keys(groupedItems).filter(Boolean).sort();
+
+      const items: DropdownItem[] = groupedItems[''] ?? [];
+      for (let group of groupNames) {
+        items.push({
+          label: group,
+          isGroup: true,
+        });
+
+        const grouped = groupedItems[group] ?? [];
+        items.push(...grouped);
       }
-      let groupNames = uniq(
-        this.items
-          .map((d) => d.group)
-          .filter(Boolean)
-          .sort()
-      );
-      if (groupNames.length > 0) {
-        return groupNames;
-      }
-      return null;
+
+      return items;
+    },
+  },
+  watch: {
+    highlightedIndex() {
+      this.scrollToHighlighted();
     },
     dropdownItems() {
-      if (this.sortedGroups) {
-        let itemsByGroup = {};
-
-        for (let item of this.items) {
-          let group = item.group || '';
-          itemsByGroup[group] = itemsByGroup[group] || [];
-          itemsByGroup[group].push(item);
-        }
-
-        let items = [];
-        let i = 0;
-        for (let group of this.sortedGroups) {
-          let groupItems = itemsByGroup[group];
-          groupItems = groupItems.map((d) => {
-            d.index = i;
-            i++;
-            return d;
-          });
-          items = items.concat(
-            {
-              label: group,
-              isGroup: true,
-            },
-            groupItems
-          );
-        }
-
-        return items;
-      }
-
-      return this.items.map((d, i) => {
-        d.index = i;
-        return d;
-      });
+      const maxed = Math.max(this.highlightedIndex, -1);
+      this.highlightedIndex = Math.min(maxed, this.dropdownItems.length - 1);
     },
   },
   methods: {
-    selectItem(d) {
-      if (d.action) {
-        d.action();
-      }
-    },
-    toggleDropdown(flag) {
-      if (flag == null) {
-        this.isShown = !this.isShown;
-      } else {
-        this.isShown = Boolean(flag);
-      }
-    },
-    selectHighlightedItem() {
-      if (![-1, this.items.length].includes(this.highlightedIndex)) {
-        // valid selection
-        let item = this.items[this.highlightedIndex];
-        this.selectItem(item);
-      }
-    },
-    highlightItemUp() {
-      this.highlightedIndex -= 1;
-      if (this.highlightedIndex < 0) {
-        this.highlightedIndex = 0;
-      }
-      this.$nextTick(() => {
-        let index = this.highlightedIndex;
-        if (index !== 0) {
-          index -= 1;
-        }
-        this.scrollToHighlighted();
-      });
-    },
-    highlightItemDown() {
-      this.highlightedIndex += 1;
-      if (this.highlightedIndex > this.items.length) {
-        this.highlightedIndex = this.items.length;
+    getEmptyMessage(): string {
+      const { schemaName, fieldname } = this.df ?? {};
+      if (!schemaName || !fieldname || !this.doc) {
+        return this.t`Empty`;
       }
 
-      this.$nextTick(() => {
-        this.scrollToHighlighted();
-      });
+      const emptyMessage = fyo.models[schemaName]?.emptyMessages[fieldname]?.(
+        this.doc
+      );
+
+      if (!emptyMessage) {
+        return this.t`Empty`;
+      }
+
+      return emptyMessage;
     },
-    scrollToHighlighted() {
-      let highlightedElement = this.$refs.items[this.highlightedIndex];
-      highlightedElement &&
-        highlightedElement.scrollIntoView({ block: 'nearest' });
+    async selectItem(d?: DropdownItem): Promise<void> {
+      if (!d || !d?.action) {
+        return;
+      }
+
+      if (this.doc) {
+        await d.action(this.doc, this.$router);
+      } else {
+        await d.action();
+      }
+
+      this.toggleDropdown(false);
+    },
+    toggleDropdown(flag?: boolean): void {
+      if (typeof flag !== 'boolean') {
+        flag = !this.isShown;
+      }
+
+      this.isShown = flag;
+    },
+    async selectHighlightedItem(): Promise<void> {
+      let item = this.dropdownItems[this.highlightedIndex];
+      if (!item) {
+        if (this.dropdownItems.length === 1) {
+          item = this.dropdownItems[0];
+        } else {
+          return;
+        }
+      }
+
+      if (item.isGroup) {
+        return;
+      }
+
+      return await this.selectItem(item);
+    },
+    highlightItemUp(e?: Event): void {
+      e?.preventDefault();
+
+      this.highlightedIndex = Math.max(0, this.highlightedIndex - 1);
+    },
+    highlightItemDown(e?: Event): void {
+      e?.preventDefault();
+
+      this.highlightedIndex = Math.min(
+        this.dropdownItems.length - 1,
+        this.highlightedIndex + 1
+      );
+    },
+    scrollToHighlighted(): void {
+      const elems = this.$refs.items;
+      if (!Array.isArray(elems)) {
+        return;
+      }
+
+      const highlightedElement = elems[this.highlightedIndex];
+      if (!(highlightedElement instanceof Element)) {
+        return;
+      }
+
+      highlightedElement.scrollIntoView({ block: 'nearest' });
     },
   },
-};
+});
+
+function getGroupedItems(
+  items: DropdownItem[]
+): Record<string, DropdownItem[]> {
+  const groupedItems: Record<string, DropdownItem[]> = {};
+  for (let item of items) {
+    const group = item.group ?? '';
+
+    groupedItems[group] ??= [];
+    groupedItems[group].push(item);
+  }
+
+  return groupedItems;
+}
 </script>

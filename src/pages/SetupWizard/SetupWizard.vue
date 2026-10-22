@@ -1,192 +1,234 @@
 <template>
-  <div
-    class="flex-1 py-10 bg-white"
-    :class="{
-      'window-drag': platform !== 'Windows',
-    }"
+  <FormContainer
+    :show-header="false"
+    class="justify-content items-center h-full"
+    :class="{ 'window-drag': platform !== 'Windows' }"
   >
-    <div class="px-12">
-      <h1 class="text-2xl font-semibold">{{ _('Setup your organization') }}</h1>
-    </div>
-    <div class="px-8 mt-5 window-no-drag" v-if="doc">
-      <div class="flex items-center px-6 py-5 mb-4 border bg-brand rounded-xl">
-        <FormControl
-          :df="meta.getField('companyLogo')"
-          :value="doc.companyLogo"
-          @change="(value) => setValue('companyLogo', value)"
-        />
-        <div class="ml-2">
-          <FormControl
-            ref="companyField"
-            :df="meta.getField('companyName')"
-            :value="doc.companyName"
-            @change="(value) => setValue('companyName', value)"
-            :input-class="
-              (classes) => [
-                'bg-transparent font-semibold text-xl text-white placeholder-blue-200 focus:outline-none focus:bg-blue-600 px-3 rounded py-1',
-              ]
-            "
-            :autofocus="true"
-          />
-          <Popover placement="auto" :show-popup="Boolean(emailError)">
-            <template slot="target">
-              <FormControl
-                :df="meta.getField('email')"
-                :value="doc.email"
-                @change="(value) => setValue('email', value)"
-                :input-class="
-                  (classes) => [
-                    'text-base bg-transparent text-white placeholder-blue-200 focus:bg-blue-600 focus:outline-none rounded px-3 py-1',
-                  ]
-                "
-              />
-            </template>
-            <template slot="content">
-              <div class="p-2 text-sm">
-                {{ emailError }}
-              </div>
-            </template>
-          </Popover>
-        </div>
-      </div>
-      <TwoColumnForm :fields="fields" :doc="doc" />
-    </div>
-    <div class="flex justify-end px-8 mt-5 window-no-drag">
-      <Button
-        @click="submit"
-        type="primary"
-        class="text-sm text-white"
-        :disabled="!valuesFilled || loading"
+    <template #body>
+      <FormHeader
+        :form-title="t`Set up your organization`"
+        class="
+          sticky
+          top-0
+          bg-white
+          dark:bg-gray-890
+          border-b
+          dark:border-gray-800
+        "
       >
-        {{ buttonText }}
-      </Button>
-    </div>
-  </div>
-</template>
-<script>
-import frappe from 'frappejs';
-import TwoColumnForm from '@/components/TwoColumnForm';
-import FormControl from '@/components/Controls/FormControl';
-import Button from '@/components/Button';
-import setupCompany from './setupCompany';
-import Popover from '@/components/Popover';
-import config from '@/config';
-import path from 'path';
-import fs from 'fs';
-import { purgeCache, connectToLocalDatabase } from '@/initialization';
-import {
-  getErrorMessage,
-  handleErrorWithDialog,
-  showMessageDialog,
-  showErrorDialog,
-} from '@/utils';
+      </FormHeader>
 
-export default {
+      <!-- Section Container -->
+      <div
+        v-if="hasDoc"
+        class="overflow-auto custom-scroll custom-scroll-thumb1"
+      >
+        <CommonFormSection
+          v-for="([name, fields], idx) in activeGroup.entries()"
+          :key="name + idx"
+          ref="section"
+          class="p-4"
+          :class="
+            idx !== 0 && activeGroup.size > 1
+              ? 'border-t dark:border-gray-800'
+              : ''
+          "
+          :show-title="activeGroup.size > 1 && name !== t`Default`"
+          :title="name"
+          :fields="fields"
+          :doc="doc"
+          :errors="errors"
+          :collapsible="false"
+          @value-change="onValueChange"
+        />
+      </div>
+
+      <!-- Buttons Bar -->
+      <div
+        class="
+          mt-auto
+          p-4
+          flex
+          items-center
+          justify-between
+          border-t
+          dark:border-gray-800
+          flex-shrink-0
+          sticky
+          bottom-0
+          bg-white
+          dark:bg-gray-890
+        "
+      >
+        <p v-if="loading" class="text-base text-gray-600 dark:text-gray-400">
+          {{ t`Loading instance...` }}
+        </p>
+        <Button
+          v-if="!loading"
+          class="w-24 border dark:border-gray-800"
+          @click="cancel"
+          >{{ t`Cancel` }}</Button
+        >
+        <Button
+          v-if="fyo.store.isDevelopment && !loading"
+          class="w-24 ml-auto mr-4 border dark:border-gray-800"
+          :disabled="loading"
+          @click="fill"
+          >{{ t`Fill` }}</Button
+        >
+        <Button
+          type="primary"
+          class="w-24"
+          data-testid="submit-button"
+          :disabled="!areAllValuesFilled || loading"
+          @click="submit"
+          >{{ t`Submit` }}</Button
+        >
+      </div>
+    </template>
+  </FormContainer>
+</template>
+<script lang="ts">
+import { DocValue } from 'fyo/core/types';
+import { Doc } from 'fyo/model/doc';
+import { Verb } from 'fyo/telemetry/types';
+import { TranslationString } from 'fyo/utils/translation';
+import { ModelNameEnum } from 'models/types';
+import { Field } from 'schemas/types';
+import Button from 'src/components/Button.vue';
+import FormContainer from 'src/components/FormContainer.vue';
+import FormHeader from 'src/components/FormHeader.vue';
+import { getErrorMessage } from 'src/utils';
+import { showDialog } from 'src/utils/interactive';
+import { getSetupWizardDoc } from 'src/utils/misc';
+import { getFieldsGroupedByTabAndSection } from 'src/utils/ui';
+import { computed, defineComponent } from 'vue';
+import CommonFormSection from '../CommonForm/CommonFormSection.vue';
+
+export default defineComponent({
   name: 'SetupWizard',
-  data() {
-    return {
-      doc: null,
-      loading: false,
-      valuesFilled: false,
-      emailError: null,
-    };
+  components: {
+    Button,
+    FormContainer,
+    FormHeader,
+    CommonFormSection,
   },
   provide() {
     return {
-      doctype: 'SetupWizard',
-      name: 'SetupWizard',
+      doc: computed(() => this.docOrNull),
     };
   },
-  components: {
-    TwoColumnForm,
-    FormControl,
-    Button,
-    Popover,
+  emits: ['setup-complete', 'setup-canceled'],
+  data() {
+    return {
+      docOrNull: null,
+      errors: {},
+      loading: false,
+    } as {
+      errors: Record<string, string>;
+      docOrNull: null | Doc;
+      loading: boolean;
+    };
   },
-  async mounted() {
-    this.doc = await frappe.newDoc({ doctype: 'SetupWizard' });
-    this.doc.on('change', () => {
-      this.valuesFilled = this.allValuesFilled();
-    });
-  },
-  methods: {
-    setValue(fieldname, value) {
-      this.emailError = null;
-      this.doc.set(fieldname, value).catch((e) => {
-        // set error
-        if (fieldname === 'email') {
-          this.emailError = getErrorMessage(e, this.doc);
-        }
-      });
+  computed: {
+    hasDoc(): boolean {
+      return this.docOrNull instanceof Doc;
     },
-    allValuesFilled() {
-      let values = this.meta.quickEditFields.map(
-        (fieldname) => this.doc[fieldname]
-      );
+    doc(): Doc {
+      if (this.docOrNull instanceof Doc) {
+        return this.docOrNull;
+      }
+
+      throw new Error(`Doc is null`);
+    },
+    areAllValuesFilled(): boolean {
+      if (!this.hasDoc) {
+        return false;
+      }
+
+      const values = this.doc.schema.fields
+        .filter((f) => f.required)
+        .map((f) => this.doc[f.fieldname]);
+
       return values.every(Boolean);
     },
-    async submit() {
-      if (!this.allValuesFilled()) {
-        showMessageDialog({ message: this._('Please fill all values') });
+    activeGroup(): Map<string, Field[]> {
+      if (!this.hasDoc) {
+        return new Map();
+      }
+
+      const groupedFields = getFieldsGroupedByTabAndSection(
+        this.doc.schema,
+        this.doc
+      );
+
+      return [...groupedFields.values()][0];
+    },
+  },
+  async mounted() {
+    const languageMap = TranslationString.prototype.languageMap;
+    this.docOrNull = getSetupWizardDoc(languageMap);
+    if (!this.fyo.db.isConnected) {
+      await this.fyo.db.init();
+    }
+
+    if (this.fyo.store.isDevelopment) {
+      // @ts-ignore
+      window.sw = this;
+    }
+    this.fyo.telemetry.log(Verb.Started, ModelNameEnum.SetupWizard);
+  },
+  methods: {
+    async fill() {
+      if (!this.hasDoc) {
         return;
       }
 
+      await this.doc.set('companyName', "Lin's Things");
+      await this.doc.set('email', 'lin@lthings.com');
+      await this.doc.set('fullname', 'Lin Slovenly');
+      await this.doc.set('bankName', 'Max Finance');
+      await this.doc.set('country', 'India');
+    },
+    async onValueChange(field: Field, value: DocValue) {
+      if (!this.hasDoc) {
+        return;
+      }
+
+      const { fieldname } = field;
+      delete this.errors[fieldname];
+
       try {
-        this.loading = true;
-        await setupCompany(this.doc);
-        this.$emit('setup-complete');
-      } catch (e) {
-        this.loading = false;
-        if (e.type === frappe.errors.DuplicateEntryError) {
-          console.log(e);
-          console.log('retrying');
-          await this.renameDbFileAndRerunSetup();
-        } else {
-          handleErrorWithDialog(e, this.doc);
+        await this.doc.set(fieldname, value);
+      } catch (err) {
+        if (!(err instanceof Error)) {
+          return;
         }
+
+        this.errors[fieldname] = getErrorMessage(err, this.doc);
       }
     },
-    async renameDbFileAndRerunSetup() {
-      const filePath = config.get('lastSelectedFilePath');
-      renameDbFile(filePath);
+    async submit() {
+      if (!this.hasDoc) {
+        return;
+      }
 
-      purgeCache();
-
-      const { connectionSuccess, reason } = await connectToLocalDatabase(
-        filePath
-      );
-
-      if (connectionSuccess) {
-        await setupCompany(this.doc);
-        this.$emit('setup-complete');
-      } else {
-        await showErrorDialog({
-          title: 'DB Connection Error',
-          content: `reason: ${reason}, filePath: ${filePath}`,
+      if (!this.areAllValuesFilled) {
+        return await showDialog({
+          title: this.t`Mandatory Error`,
+          detail: this.t`Please fill all values.`,
+          type: 'error',
         });
       }
-    },
-  },
-  computed: {
-    meta() {
-      return frappe.getMeta('SetupWizard');
-    },
-    fields() {
-      return this.meta.getQuickEditFields();
-    },
-    buttonText() {
-      return this.loading ? this._('Setting Up...') : this._('Next');
-    },
-  },
-};
 
-function renameDbFile(filePath) {
-  const dirname = path.dirname(filePath);
-  const basename = path.basename(filePath);
-  const backupPath = path.join(dirname, `_${basename}`);
-  if (fs.existsSync(backupPath)) {
-    fs.unlinkSync(backupPath);
-  }
-  fs.renameSync(filePath, backupPath);
-}
+      this.loading = true;
+      this.fyo.telemetry.log(Verb.Completed, ModelNameEnum.SetupWizard);
+      this.$emit('setup-complete', this.doc.getValidDict());
+    },
+    cancel() {
+      this.fyo.telemetry.log(Verb.Cancelled, ModelNameEnum.SetupWizard);
+      this.$emit('setup-canceled');
+    },
+  },
+});
 </script>

@@ -1,123 +1,328 @@
 <template>
   <div
     id="app"
-    class="h-screen flex flex-col font-sans overflow-hidden antialiased"
+    class="
+      dark:bg-gray-900
+      h-screen
+      flex flex-col
+      font-sans
+      overflow-hidden
+      antialiased
+    "
+    :dir="languageDirection"
+    :language="language"
   >
-    <WindowsTitleBar v-if="platform === 'Windows'" />
+    <WindowsTitleBar
+      v-if="platform === 'Windows'"
+      :db-path="dbPath"
+      :company-name="companyName"
+    />
+    <!-- Main Contents -->
     <Desk
-      class="flex-1"
       v-if="activeScreen === 'Desk'"
-      @change-db-file="changeDbFile"
+      class="flex-1"
+      :dark-mode="darkMode"
+      @change-db-file="showDbSelector"
     />
     <DatabaseSelector
       v-if="activeScreen === 'DatabaseSelector'"
-      @database-connect="showSetupWizardOrDesk(true)"
+      ref="databaseSelector"
+      @new-database="newDatabase"
+      @file-selected="fileSelected"
     />
     <SetupWizard
       v-if="activeScreen === 'SetupWizard'"
-      @setup-complete="showSetupWizardOrDesk(true)"
+      @setup-complete="setupComplete"
+      @setup-canceled="showDbSelector"
     />
-    <portal-target name="popovers" multiple></portal-target>
+
+    <!-- Render target for toasts -->
+    <div
+      id="toast-container"
+      class="absolute bottom-0 flex flex-col items-end mb-3 pe-6"
+      style="width: 100%; pointer-events: none"
+    ></div>
   </div>
 </template>
-
-<script>
+<script lang="ts">
+import { RTL_LANGUAGES } from 'fyo/utils/consts';
+import { ModelNameEnum } from 'models/types';
+import { systemLanguageRef } from 'src/utils/refs';
+import { defineComponent, provide, ref, Ref } from 'vue';
+import WindowsTitleBar from './components/WindowsTitleBar.vue';
+import { handleErrorWithDialog } from './errorHandling';
+import { fyo } from './initFyo';
+import DatabaseSelector from './pages/DatabaseSelector.vue';
+import Desk from './pages/Desk.vue';
+import SetupWizard from './pages/SetupWizard/SetupWizard.vue';
+import setupInstance from './setup/setupInstance';
+import { SetupWizardOptions } from './setup/types';
 import './styles/index.css';
-import frappe from 'frappejs';
-import Desk from './pages/Desk';
-import SetupWizard from './pages/SetupWizard/SetupWizard';
-import DatabaseSelector from './pages/DatabaseSelector';
-import WindowsTitleBar from '@/components/WindowsTitleBar';
-import { ipcRenderer } from 'electron';
-import config from '@/config';
-import { IPC_MESSAGES, IPC_ACTIONS } from '@/messages';
-import { connectToLocalDatabase, purgeCache } from '@/initialization';
-import { routeTo, showErrorDialog } from './utils';
-import { DB_CONN_FAILURE } from './messages';
+import { connectToDatabase, dbErrorActionSymbols } from './utils/db';
+import { initializeInstance } from './utils/initialization';
+import * as injectionKeys from './utils/injectionKeys';
+import { showDialog, showToast } from './utils/interactive';
+import { setLanguageMap } from './utils/language';
+import { updateConfigFiles } from './utils/misc';
+import { updatePrintTemplates } from './utils/printTemplates';
+import { Search } from './utils/search';
+import { Shortcuts } from './utils/shortcuts';
+import { routeTo } from './utils/ui';
+import { useKeys } from './utils/vueUtils';
+import { setDarkMode } from 'src/utils/theme';
+import {
+  registerInstanceToERPNext,
+  updateERPNSyncSettings,
+} from './utils/erpnextSync';
+import { ERPNextSyncSettings } from 'models/baseModels/ERPNextSyncSettings/ERPNextSyncSettings';
+import { ErrorLogEnum } from 'fyo/telemetry/types';
 
-export default {
+enum Screen {
+  Desk = 'Desk',
+  DatabaseSelector = 'DatabaseSelector',
+  SetupWizard = 'SetupWizard',
+}
+
+export default defineComponent({
   name: 'App',
-  data() {
-    return {
-      activeScreen: null,
-    };
-  },
-  watch: {
-    async activeScreen(value) {
-      if (!value) return;
-      const { width, height } = await ipcRenderer.invoke(
-        IPC_ACTIONS.GET_PRIMARY_DISPLAY_SIZE
-      );
-
-      let size = {
-        Desk: [width, height],
-        DatabaseSelector: [600, 600],
-        SetupWizard: [600, 600],
-      }[value];
-      let resizable = value === 'Desk';
-
-      if (size.length) {
-        ipcRenderer.send(IPC_MESSAGES.RESIZE_MAIN_WINDOW, size, resizable);
-      }
-    },
-  },
   components: {
     Desk,
     SetupWizard,
     DatabaseSelector,
     WindowsTitleBar,
   },
-  async mounted() {
-    const lastSelectedFilePath = config.get('lastSelectedFilePath', null);
-    const { connectionSuccess, reason } = await connectToLocalDatabase(
-      lastSelectedFilePath
+  setup() {
+    const keys = useKeys();
+    const searcher: Ref<null | Search> = ref(null);
+    const shortcuts = new Shortcuts(keys);
+    const languageDirection = ref(
+      getLanguageDirection(systemLanguageRef.value)
     );
 
-    if (connectionSuccess) {
-      this.showSetupWizardOrDesk();
-      return;
-    }
+    provide(injectionKeys.keysKey, keys);
+    provide(injectionKeys.searcherKey, searcher);
+    provide(injectionKeys.shortcutsKey, shortcuts);
+    provide(injectionKeys.languageDirectionKey, languageDirection);
 
-    if (lastSelectedFilePath) {
-      await showErrorDialog({
-        title: 'DB Connection Error',
-        content: `reason: ${reason}, filePath: ${lastSelectedFilePath}`,
-      });
-    }
+    const databaseSelector = ref<InstanceType<typeof DatabaseSelector> | null>(
+      null
+    );
 
-    this.activeScreen = 'DatabaseSelector';
+    return {
+      keys,
+      searcher,
+      shortcuts,
+      languageDirection,
+      databaseSelector,
+    };
+  },
+  data() {
+    return {
+      activeScreen: null,
+      dbPath: '',
+      companyName: '',
+      darkMode: false,
+    } as {
+      activeScreen: null | Screen;
+      dbPath: string;
+      companyName: string;
+      darkMode: boolean | undefined;
+    };
+  },
+  computed: {
+    language(): string {
+      return systemLanguageRef.value;
+    },
+  },
+  watch: {
+    language(value: string) {
+      this.languageDirection = getLanguageDirection(value);
+    },
+  },
+  async mounted() {
+    await this.setInitialScreen();
+    const darkMode = !!fyo.singles.SystemSettings?.darkMode;
+    setDarkMode(darkMode);
+    this.darkMode = darkMode;
   },
   methods: {
-    async showSetupWizardOrDesk(resetRoute = false) {
-      const { setupComplete } = frappe.AccountingSettings;
-      if (!setupComplete) {
-        this.activeScreen = 'SetupWizard';
-      } else {
-        this.activeScreen = 'Desk';
-        this.checkForUpdates();
-      }
+    async setInitialScreen(): Promise<void> {
+      const lastSelectedFilePath = fyo.config.get('lastSelectedFilePath', null);
 
-      if (!resetRoute) {
+      if (
+        typeof lastSelectedFilePath !== 'string' ||
+        !lastSelectedFilePath.length
+      ) {
+        this.activeScreen = Screen.DatabaseSelector;
         return;
       }
 
-      const { onboardingComplete } = await frappe.getSingle('GetStarted');
-      const { hideGetStarted } = await frappe.getSingle('SystemSettings');
+      await this.fileSelected(lastSelectedFilePath);
+    },
+    async setSearcher(): Promise<void> {
+      this.searcher = new Search(fyo);
+      await this.searcher.initializeKeywords();
+    },
+    async setDesk(filePath: string): Promise<void> {
+      await setLanguageMap();
+      this.activeScreen = Screen.Desk;
+      await this.setDeskRoute();
+      await fyo.telemetry.start(true);
+      await ipc.checkForUpdates();
+      this.dbPath = filePath;
+      this.companyName = (await fyo.getValue(
+        ModelNameEnum.AccountingSettings,
+        'companyName'
+      )) as string;
+      await this.setSearcher();
+      updateConfigFiles(fyo);
+    },
+    newDatabase() {
+      this.activeScreen = Screen.SetupWizard;
+    },
+    async fileSelected(filePath: string): Promise<void> {
+      fyo.config.set('lastSelectedFilePath', filePath);
+      if (filePath !== ':memory:' && !(await ipc.checkDbAccess(filePath))) {
+        await showDialog({
+          title: this.t`Cannot open file`,
+          type: 'error',
+          detail: this
+            .t`Frappe Books does not have access to the selected file: ${filePath}`,
+        });
 
-      if (hideGetStarted || onboardingComplete) {
-        routeTo('/');
-      } else {
-        routeTo('/get-started');
+        fyo.config.set('lastSelectedFilePath', null);
+        return;
+      }
+
+      try {
+        await this.showSetupWizardOrDesk(filePath);
+      } catch (error) {
+        await handleErrorWithDialog(error, undefined, true, true);
+        await this.showDbSelector();
       }
     },
-    checkForUpdates() {
-      frappe.events.trigger('check-for-updates');
+    async setupComplete(setupWizardOptions: SetupWizardOptions): Promise<void> {
+      const companyName = setupWizardOptions.companyName;
+      const filePath = await ipc.getDbDefaultPath(companyName);
+      await setupInstance(filePath, setupWizardOptions, fyo);
+      fyo.config.set('lastSelectedFilePath', filePath);
+      await this.setDesk(filePath);
     },
-    changeDbFile() {
-      config.set('lastSelectedFilePath', null);
-      purgeCache(true);
-      this.activeScreen = 'DatabaseSelector';
+    async showSetupWizardOrDesk(filePath: string): Promise<void> {
+      const { countryCode, error, actionSymbol } = await connectToDatabase(
+        this.fyo,
+        filePath
+      );
+
+      if (!countryCode && error && actionSymbol) {
+        return await this.handleConnectionFailed(error, actionSymbol);
+      }
+
+      const setupComplete = await fyo.getValue(
+        ModelNameEnum.AccountingSettings,
+        'setupComplete'
+      );
+
+      if (!setupComplete) {
+        this.activeScreen = Screen.SetupWizard;
+        return;
+      }
+
+      await initializeInstance(filePath, false, countryCode, fyo);
+      await updatePrintTemplates(fyo);
+
+      const syncSettingsDoc = (await fyo.doc.getDoc(
+        ModelNameEnum.ERPNextSyncSettings
+      )) as ERPNextSyncSettings;
+
+      const baseURL = syncSettingsDoc.baseURL;
+      const token = syncSettingsDoc.authToken;
+      const enableERPNextSync =
+        fyo.singles.AccountingSettings?.enableERPNextSync;
+
+      if (enableERPNextSync && baseURL && token) {
+        try {
+          await registerInstanceToERPNext(fyo);
+          await updateERPNSyncSettings(fyo);
+          await ipc.initScheduler(
+            `${fyo.singles.ERPNextSyncSettings?.dataSyncInterval as string}m`
+          );
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+
+          try {
+            const existing = await fyo.db.getAll(
+              ErrorLogEnum.IntegrationErrorLog,
+              {
+                filters: {
+                  error: errorMessage,
+                },
+                limit: 1,
+              }
+            );
+
+            if (!existing.length) {
+              await fyo.doc
+                .getNewDoc(ErrorLogEnum.IntegrationErrorLog, {
+                  error: errorMessage,
+                  data: JSON.stringify({
+                    instance: fyo.singles.ERPNextSyncSettings?.deviceID,
+                    operation: 'register_instance',
+                    trigger: 'showSetupWizardOrDesk',
+                    baseURL: baseURL,
+                  }),
+                })
+                .sync();
+            }
+          } catch (logError) {
+            throw logError;
+          }
+          showToast({ message: 'Connection Failed', type: 'error' });
+        }
+      }
+
+      await this.setDesk(filePath);
+    },
+    async handleConnectionFailed(error: Error, actionSymbol: symbol) {
+      await this.showDbSelector();
+
+      if (actionSymbol === dbErrorActionSymbols.CancelSelection) {
+        return;
+      }
+
+      if (actionSymbol === dbErrorActionSymbols.SelectFile) {
+        await this.databaseSelector?.existingDatabase();
+        return;
+      }
+
+      throw error;
+    },
+    async setDeskRoute(): Promise<void> {
+      const { onboardingComplete } = await fyo.doc.getDoc('GetStarted');
+      const { hideGetStarted } = await fyo.doc.getDoc('SystemSettings');
+
+      let route = '/get-started';
+      if (hideGetStarted || onboardingComplete) {
+        route = localStorage.getItem('lastRoute') || '/';
+      }
+
+      await routeTo(route);
+    },
+    async showDbSelector(): Promise<void> {
+      localStorage.clear();
+      fyo.config.set('lastSelectedFilePath', null);
+      fyo.telemetry.stop();
+      await fyo.purgeCache();
+      this.activeScreen = Screen.DatabaseSelector;
+      this.dbPath = '';
+      this.searcher = null;
+      this.companyName = '';
     },
   },
-};
+});
+
+function getLanguageDirection(language: string): 'rtl' | 'ltr' {
+  return RTL_LANGUAGES.includes(language) ? 'rtl' : 'ltr';
+}
 </script>

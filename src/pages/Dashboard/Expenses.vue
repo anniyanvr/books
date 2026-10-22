@@ -1,137 +1,154 @@
 <template>
   <div class="flex flex-col h-full">
     <SectionHeader>
-      <template slot="title">{{ _('Top Expenses') }}</template>
-      <PeriodSelector
-        slot="action"
-        :value="period"
-        @change="(value) => (period = value)"
-      />
+      <template #title>{{ t`Top Expenses` }}</template>
+      <template #action>
+        <PeriodSelector :value="period" @change="(value) => (period = value)" />
+      </template>
     </SectionHeader>
-    <div class="flex relative" v-show="hasData">
-      <div class="w-1/2">
+
+    <div v-show="hasData" class="flex relative">
+      <!-- Chart Legend -->
+      <div class="w-1/2 flex flex-col gap-4 justify-center dark:text-gray-25">
+        <!-- Ledgend Item -->
         <div
-          class="mt-5 flex justify-between items-center text-sm"
-          v-for="d in expenses"
-          :key="d.name"
+          v-for="(d, i) in expenses"
+          :key="d.account"
+          class="flex items-center text-sm"
+          @mouseover="active = i"
+          @mouseleave="active = null"
         >
-          <div class="flex items-center">
-            <div class="w-3 h-3 rounded-sm" :class="d.class"></div>
-            <div class="ml-3">{{ d.account }}</div>
-          </div>
-          <div>{{ frappe.format(d.total, 'Currency') }}</div>
+          <div class="w-3 h-3 rounded-sm flex-shrink-0" :class="d.class" />
+          <p class="ms-2 overflow-x-auto whitespace-nowrap no-scrollbar w-28">
+            {{ d.account }}
+          </p>
+          <p class="whitespace-nowrap flex-shrink-0 ms-auto">
+            {{ fyo.format(d?.total ?? 0, 'Currency') }}
+          </p>
         </div>
       </div>
-      <div class="w-1/2">
-        <div class="chart-wrapper" ref="top-expenses"></div>
-        <div
-          class="absolute text-base text-center font-semibold"
-          style="top: 4rem; left: 75%; transform: translateX(-50%)"
-        >
-          <div>
-            {{ frappe.format(totalExpense, 'Currency') }}
-          </div>
-          <div class="text-xs text-gray-600">
-            {{ _('Total Spending') }}
-          </div>
-        </div>
-      </div>
+      <DonutChart
+        class="w-1/2 my-auto"
+        :active="active"
+        :sectors="sectors"
+        :offset-x="3"
+        :thickness="10"
+        :text-offset-x="6.5"
+        :value-formatter="(value: number) => fyo.format(value, 'Currency')"
+        :total-label="t`Total Spending`"
+        :dark-mode="darkMode"
+        @change="(value: number) => (active = value)"
+      />
     </div>
-    <div v-if="totalExpense === 0" class="flex-1 w-full h-full flex-center">
-      <span class="text-base text-gray-600">
-        {{ _('No transactions yet') }}
+
+    <!-- Empty Message -->
+    <div
+      v-if="expenses.length === 0"
+      class="flex-1 w-full h-full flex-center my-20"
+    >
+      <span class="text-base text-gray-600 dark:text-gray-500">
+        {{ t`No expenses in this period` }}
       </span>
     </div>
   </div>
 </template>
 
-<script>
-import frappe from 'frappejs';
-import { Chart } from 'frappe-charts';
-import theme from '@/theme';
-import PeriodSelector from './PeriodSelector';
-import SectionHeader from './SectionHeader';
-import { getDatesAndPeriodicity } from './getDatesAndPeriodicity';
+<script lang="ts">
+import { truncate } from 'lodash';
+import { fyo } from 'src/initFyo';
+import { uicolors } from 'src/utils/colors';
+import { getDatesAndPeriodList } from 'src/utils/misc';
+import { defineComponent } from 'vue';
+import DonutChart from '../../components/Charts/DonutChart.vue';
+import DashboardChartBase from './BaseDashboardChart.vue';
+import PeriodSelector from './PeriodSelector.vue';
+import SectionHeader from './SectionHeader.vue';
 
-export default {
+// Linting broken in this file cause of `extends: ...`
+/*
+  eslint-disable @typescript-eslint/no-unsafe-argument,
+  @typescript-eslint/no-unsafe-return,
+  @typescript-eslint/restrict-plus-operands
+*/
+export default defineComponent({
   name: 'Expenses',
   components: {
+    DonutChart,
     PeriodSelector,
     SectionHeader,
   },
+  extends: DashboardChartBase,
+  props: {
+    darkMode: { type: Boolean, default: false },
+  },
   data: () => ({
-    period: 'This Year',
-    expenses: [{ account: 'Test', total: 0 }],
+    active: null as null | number,
+    expenses: [] as {
+      account: string;
+      total: number;
+      color: { color: string; darkColor: string };
+      class: { class: string; darkClass: string };
+    }[],
   }),
-  activated() {
-    this.render();
-  },
-  watch: {
-    period: 'render',
-  },
   computed: {
-    totalExpense() {
+    totalExpense(): number {
       return this.expenses.reduce((sum, expense) => sum + expense.total, 0);
     },
-    hasData() {
-      return this.totalExpense > 0;
+    hasData(): boolean {
+      return this.expenses.length > 0;
     },
+    sectors(): {
+      color: { color: string; darkColor: string };
+      label: string;
+      value: number;
+    }[] {
+      return this.expenses.map(({ account, color, total }) => ({
+        color,
+        label: truncate(account, { length: 21 }),
+        value: total,
+      }));
+    },
+  },
+  activated() {
+    this.setData();
   },
   methods: {
-    async render() {
-      let { fromDate, toDate } = await getDatesAndPeriodicity(this.period);
-      let expenseAccounts = frappe.db.knex
-        .select('name')
-        .from('Account')
-        .where('rootType', 'Expense');
-      let topExpenses = await frappe.db.knex
-        .select({
-          total: frappe.db.knex.raw('sum(??) - sum(??)', ['debit', 'credit']),
-        })
-        .select('account')
-        .from('AccountingLedgerEntry')
-        .where('account', 'in', expenseAccounts)
-        .whereBetween('date', [fromDate, toDate])
-        .groupBy('account')
-        .orderBy('total', 'desc')
-        .limit(5);
-
-      let shades = [
-        { class: 'bg-gray-800', hex: theme.backgroundColor.gray['800'] },
-        { class: 'bg-gray-600', hex: theme.backgroundColor.gray['600'] },
-        { class: 'bg-gray-400', hex: theme.backgroundColor.gray['400'] },
-        { class: 'bg-gray-200', hex: theme.backgroundColor.gray['200'] },
-        { class: 'bg-gray-100', hex: theme.backgroundColor.gray['100'] },
+    async setData() {
+      const { fromDate, toDate } = getDatesAndPeriodList(this.period);
+      let topExpenses = await fyo.db.getTopExpenses(
+        fromDate.toISO(),
+        toDate.toISO()
+      );
+      const shades = [
+        { class: 'bg-pink-500', hex: uicolors.pink['500'] },
+        { class: 'bg-pink-400', hex: uicolors.pink['400'] },
+        { class: 'bg-pink-300', hex: uicolors.pink['300'] },
+        { class: 'bg-pink-200', hex: uicolors.pink['200'] },
+        { class: 'bg-pink-100', hex: uicolors.pink['100'] },
       ];
-      topExpenses = topExpenses.map((d, i) => {
-        d.class = shades[i].class;
-        d.color = shades[i].hex;
-        return d;
-      });
 
-      this.expenses = topExpenses;
-
-      new Chart(this.$refs['top-expenses'], {
-        type: 'donut',
-        hoverRadio: 0.01,
-        strokeWidth: 18,
-        colors: topExpenses.map((d) => d.color),
-        data: {
-          labels: topExpenses.map((d) => d.account),
-          datasets: [
-            {
-              values: topExpenses.map((d) => d.total),
-            },
-          ],
+      const darkshades = [
+        { class: 'bg-pink-600', hex: uicolors.pink['600'] },
+        { class: 'bg-pink-500', hex: uicolors.pink['500'] },
+        { class: 'bg-pink-400', hex: uicolors.pink['400'] },
+        { class: 'bg-pink-300', hex: uicolors.pink['300'] },
+        {
+          class: 'bg-pink-200 dark:bg-opacity-80',
+          hex: uicolors.pink['200'] + 'CC',
         },
-      });
+      ];
+
+      this.expenses = topExpenses
+        .filter((e) => e.total > 0)
+        .map((d, i) => {
+          return {
+            account: d.account,
+            total: d.total,
+            color: { color: shades[i].hex, darkColor: darkshades[i].hex },
+            class: { class: shades[i].class, darkClass: darkshades[i].class },
+          };
+        });
     },
   },
-};
+});
 </script>
-
-<style>
-.donut-chart {
-  transform: translate(40px, 20px);
-}
-</style>

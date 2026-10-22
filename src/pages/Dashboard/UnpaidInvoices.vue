@@ -1,152 +1,258 @@
 <template>
-  <div class="flex justify-between mx-auto">
-    <div
-      class="w-1/2 mx-4 flex flex-col justify-between"
-      v-for="invoice in invoices"
-      :key="invoice.title"
-    >
-      <SectionHeader>
-        <template slot="title">{{ invoice.title }}</template>
-        <PeriodSelector
-          v-if="invoice.hasData"
-          slot="action"
-          :value="$data[invoice.periodKey]"
-          @change="value => ($data[invoice.periodKey] = value)"
-        />
-        <Button
-          v-else
-          slot="action"
-          :icon="true"
-          type="primary"
-          @click="newInvoice(invoice)"
+  <div class="flex-col justify-between w-full p-4">
+    <!-- Title and Period Selector -->
+    <SectionHeader>
+      <template #title>{{ title }}</template>
+      <template #action>
+        <PeriodSelector :value="period" @change="(value) => (period = value)" />
+      </template>
+    </SectionHeader>
+
+    <!-- Widget Body -->
+    <div class="mt-4">
+      <!-- Paid & Unpaid Amounts -->
+      <div class="flex justify-between">
+        <!-- Paid -->
+        <div
+          class="text-sm font-medium dark:text-gray-25"
+          :class="{
+            'bg-gray-200 dark:bg-gray-700 text-gray-200 dark:text-gray-700 rounded':
+              !count,
+            'cursor-pointer': paidCount > 0,
+          }"
+          :title="paidCount > 0 ? t`View Paid Invoices` : ''"
+          @click="() => routeToInvoices('paid')"
         >
-          <feather-icon name="plus" class="w-4 h-4 text-white" />
-        </Button>
-      </SectionHeader>
-      <div>
-        <div class="mt-6 flex justify-between">
-          <div
-            class="text-sm"
-            :class="{ 'bg-gray-200 text-gray-200 rounded': !invoice.hasData }"
+          {{ fyo.format(paid, 'Currency') }}
+          <span
+            :class="{ 'text-gray-900 dark:text-gray-200 font-normal': count }"
+            >{{ t`Paid` }}</span
           >
-            {{ frappe.format(invoice.paid, 'Currency') }}
-            <span :class="{ 'text-gray-600': invoice.hasData }">{{
-              _('Paid')
-            }}</span>
-          </div>
-          <div
-            class="text-sm"
-            :class="{ 'bg-gray-200 text-gray-200 rounded': !invoice.hasData }"
-          >
-            {{ frappe.format(invoice.unpaid, 'Currency') }}
-            <span :class="{ 'text-gray-600': invoice.hasData }">{{
-              _('Unpaid')
-            }}</span>
-          </div>
         </div>
-        <div class="mt-2 relative rounded overflow-hidden">
-          <div
-            class="w-full h-4"
-            :class="
-              invoice.hasData && invoice.color == 'blue'
-                ? 'bg-blue-200'
-                : 'bg-gray-200'
-            "
-          ></div>
-          <div
-            class="absolute inset-0 h-4"
-            :class="
-              invoice.hasData && invoice.color == 'blue'
-                ? 'bg-blue-500'
-                : 'bg-gray-500'
-            "
-            :style="`width: ${invoice.barWidth}%`"
-          ></div>
+
+        <!-- Unpaid -->
+        <div
+          class="text-sm font-medium dark:text-gray-25"
+          :class="{
+            'bg-gray-200 dark:bg-gray-700 text-gray-200 dark:text-gray-700 rounded':
+              !count,
+            'cursor-pointer': unpaidCount > 0,
+          }"
+          :title="unpaidCount > 0 ? t`View Unpaid Invoices` : ''"
+          @click="() => routeToInvoices('unpaid')"
+        >
+          {{ fyo.format(unpaid, 'Currency') }}
+          <span
+            :class="{ 'text-gray-900 dark:text-gray-200 font-normal': count }"
+            >{{ t`Unpaid` }}</span
+          >
         </div>
       </div>
+
+      <!-- Widget Bar -->
+      <div
+        class="mt-2 relative rounded overflow-hidden"
+        @mouseenter="show = true"
+        @mouseleave="show = false"
+      >
+        <div class="w-full h-4" :class="unpaidColor"></div>
+        <div
+          class="absolute inset-0 h-4"
+          :class="paidColor"
+          :style="`width: ${barWidth}%`"
+        ></div>
+      </div>
     </div>
+    <MouseFollower
+      v-if="hasData"
+      :offset="15"
+      :show="show"
+      placement="top"
+      class="
+        text-sm
+        shadow-md
+        px-2
+        py-1
+        bg-white
+        dark:bg-gray-900
+        text-gray-900
+        dark:text-white
+        border-s-4
+      "
+      :style="{ borderColor: colors }"
+    >
+      <div class="flex justify-between gap-4">
+        <p>{{ t`Paid` }}</p>
+        <p class="font-semibold">{{ paidCount ?? 0 }}</p>
+      </div>
+      <div v-if="unpaidCount > 0" class="flex justify-between gap-4">
+        <p>{{ t`Unpaid` }}</p>
+        <p class="font-semibold">{{ unpaidCount ?? 0 }}</p>
+      </div>
+    </MouseFollower>
   </div>
 </template>
-<script>
-import frappe from 'frappejs';
-import Button from '@/components/Button';
-import PeriodSelector from './PeriodSelector';
-import SectionHeader from './SectionHeader';
-import { getDatesAndPeriodicity } from './getDatesAndPeriodicity';
-import { routeTo } from '@/utils'
+<script lang="ts">
+import { t } from 'fyo';
+import { DateTime } from 'luxon';
+import { ModelNameEnum } from 'models/types';
+import MouseFollower from 'src/components/MouseFollower.vue';
+import { fyo } from 'src/initFyo';
+import { uicolors } from 'src/utils/colors';
+import { getDatesAndPeriodList } from 'src/utils/misc';
+import { PeriodKey } from 'src/utils/types';
+import { routeTo } from 'src/utils/ui';
+import { safeParseFloat } from 'utils/index';
+import { PropType, defineComponent } from 'vue';
+import BaseDashboardChart from './BaseDashboardChart.vue';
+import PeriodSelector from './PeriodSelector.vue';
+import SectionHeader from './SectionHeader.vue';
 
-export default {
+// Linting broken in this file cause of `extends: ...`
+/* 
+  eslint-disable @typescript-eslint/no-unsafe-argument, 
+  @typescript-eslint/restrict-template-expressions,
+  @typescript-eslint/no-unsafe-return
+*/
+export default defineComponent({
   name: 'UnpaidInvoices',
   components: {
     PeriodSelector,
     SectionHeader,
-    Button
+    MouseFollower,
   },
-  data: () => ({
-    invoices: [
-      {
-        title: 'Sales Invoices',
-        doctype: 'SalesInvoice',
-        total: 0,
-        unpaid: 0,
-        paid: 0,
-        color: 'blue',
-        periodKey: 'salesInvoicePeriod',
-        hasData: false,
-        barWidth: 40
-      },
-      {
-        title: 'Purchase Invoices',
-        doctype: 'PurchaseInvoice',
-        total: 0,
-        unpaid: 0,
-        paid: 0,
-        color: 'gray',
-        periodKey: 'purchaseInvoicePeriod',
-        hasData: false,
-        barWidth: 60
+  extends: BaseDashboardChart,
+  props: {
+    schemaName: { type: String as PropType<string>, required: true },
+    darkMode: { type: Boolean, default: false },
+  },
+  data() {
+    return {
+      show: false,
+      total: 0,
+      unpaid: 0,
+      hasData: false,
+      paid: 0,
+      count: 0,
+      unpaidCount: 0,
+      paidCount: 0,
+      barWidth: 40,
+      period: 'This Year',
+    } as {
+      show: boolean;
+      period: PeriodKey;
+      total: number;
+      unpaid: number;
+      hasData: boolean;
+      paid: number;
+      count: number;
+      unpaidCount: number;
+      paidCount: number;
+      barWidth: number;
+    };
+  },
+  computed: {
+    title(): string {
+      return fyo.schemaMap[this.schemaName]?.label ?? '';
+    },
+    color(): 'blue' | 'pink' {
+      if (this.schemaName === ModelNameEnum.SalesInvoice) {
+        return 'blue';
       }
-    ],
-    salesInvoicePeriod: 'This Year',
-    purchaseInvoicePeriod: 'This Year'
-  }),
-  watch: {
-    salesInvoicePeriod: 'calculateInvoiceTotals',
-    purchaseInvoicePeriod: 'calculateInvoiceTotals'
+      return 'pink';
+    },
+    colors(): string {
+      return uicolors[this.color][this.darkMode ? '600' : '500'];
+    },
+    paidColor(): string {
+      if (!this.hasData) {
+        return this.darkMode ? 'bg-gray-700' : 'bg-gray-400';
+      }
+
+      return `bg-${this.color}-${this.darkMode ? '600' : '500'}`;
+    },
+    unpaidColor(): string {
+      if (!this.hasData) {
+        return `bg-gray-${this.darkMode ? '800' : '200'}`;
+      }
+
+      return `bg-${this.color}-${this.darkMode ? '700 bg-opacity-20' : '200'}`;
+    },
   },
-  activated() {
-    this.calculateInvoiceTotals();
+  async activated() {
+    await this.setData();
   },
   methods: {
-    async calculateInvoiceTotals() {
-      let promises = this.invoices.map(async d => {
-        let { fromDate, toDate } = await getDatesAndPeriodicity(
-          this.$data[d.periodKey]
-        );
+    async routeToInvoices(type: 'paid' | 'unpaid') {
+      if (type === 'paid' && !this.paidCount) {
+        return;
+      }
 
-        let result = await frappe.db
-          .knex(d.doctype)
-          .sum({ total: 'baseGrandTotal' })
-          .sum({ outstanding: 'outstandingAmount' })
-          .where('submitted', 1)
-          .whereBetween('date', [fromDate, toDate])
-          .first();
+      if (type === 'unpaid' && !this.unpaidCount) {
+        return;
+      }
 
-        let { total, outstanding } = result;
-        d.total = total;
-        d.unpaid = outstanding;
-        d.paid = total - outstanding;
-        d.hasData = (d.total || 0) !== 0;
-        d.barWidth = (d.paid / d.total) * 100;
-        return d;
+      const zero = this.fyo.pesa(0).store;
+      const filters = { outstandingAmount: ['=', zero] };
+      const schemaLabel = fyo.schemaMap[this.schemaName]?.label ?? '';
+      let label = t`Paid ${schemaLabel}`;
+      if (type === 'unpaid') {
+        filters.outstandingAmount[0] = '!=';
+        label = t`Unpaid ${schemaLabel}`;
+      }
+
+      const path = `/list/${this.schemaName}/${label}`;
+      const query = { filters: JSON.stringify(filters) };
+      await routeTo({ path, query });
+    },
+    async setData() {
+      const { fromDate, toDate } = getDatesAndPeriodList(this.period);
+
+      const { total, outstanding } = await fyo.db.getTotalOutstanding(
+        this.schemaName,
+        fromDate.toISO(),
+        toDate.toISO()
+      );
+
+      const { countTotal, countOutstanding } = await this.getCounts(
+        this.schemaName,
+        fromDate,
+        toDate
+      );
+
+      this.total = total ?? 0;
+      this.unpaid = outstanding ?? 0;
+      this.paid = total - outstanding;
+      this.hasData = countTotal > 0;
+      this.count = countTotal;
+      this.paidCount = countTotal - countOutstanding;
+      this.unpaidCount = countOutstanding;
+      this.barWidth = (this.paid / (this.total || 1)) * 100;
+    },
+    async newInvoice() {
+      const doc = fyo.doc.getNewDoc(this.schemaName);
+      await routeTo(`/edit/${this.schemaName}/${doc.name!}`);
+    },
+
+    async getCounts(schemaName: string, fromDate: DateTime, toDate: DateTime) {
+      const outstandingAmounts = await fyo.db.getAllRaw(schemaName, {
+        fields: ['outstandingAmount'],
+        filters: {
+          cancelled: false,
+          submitted: true,
+          date: ['<=', toDate.toISO(), '>=', fromDate.toISO()],
+        },
       });
 
-      this.invoices = await Promise.all(promises);
+      const isOutstanding = outstandingAmounts.map((o) =>
+        safeParseFloat(o.outstandingAmount)
+      );
+
+      return {
+        countTotal: isOutstanding.length,
+        countOutstanding: isOutstanding.filter((o) => o > 0).length,
+      };
     },
-    async newInvoice(invoice) {
-      let doc = await frappe.getNewDoc(invoice.doctype);
-      routeTo(`/edit/${invoice.doctype}/${doc.name}`);
-    }
-  }
-};
+  },
+});
 </script>

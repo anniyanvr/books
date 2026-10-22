@@ -1,7 +1,0 @@
-[
-  {
-    "version": "0.0.3",
-    "fileName": "makePaymentRefIdNullable",
-    "beforeMigrate": true
-  }
-]

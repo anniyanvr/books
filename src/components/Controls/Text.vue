@@ -1,26 +1,33 @@
 <template>
   <div>
-    <div class="text-gray-600 text-sm mb-1" v-if="showLabel">
+    <div v-if="showLabel" :class="labelClasses">
       {{ df.label }}
     </div>
-    <textarea
-      ref="input"
-      rows="3"
-      :class="['resize-none', inputClasses]"
-      :value="value"
-      :placeholder="inputPlaceholder"
-      @blur="e => triggerChange(e.target.value)"
-      @focus="e => $emit('focus', e)"
-      @input="e => $emit('input', e)"
-    ></textarea>
+    <div :class="showMandatory ? 'show-mandatory' : ''">
+      <textarea
+        ref="input"
+        :rows="df.rows ?? rows"
+        :class="['resize-none bg-transparent', inputClasses, containerClasses]"
+        :value="value"
+        :placeholder="inputPlaceholder"
+        style="vertical-align: top"
+        :readonly="isReadOnly"
+        :tabindex="isReadOnly ? '-1' : '0'"
+        @blur="(e) => triggerChange(e.target.value)"
+        @focus="(e) => $emit('focus', e)"
+        @input="(e) => $emit('input', e)"
+      ></textarea>
+    </div>
   </div>
 </template>
 
 <script>
-import Base from './Base';
+import Base from './Base.vue';
 
 export default {
   name: 'Text',
-  extends: Base
+  extends: Base,
+  props: { rows: { type: Number, default: 3 } },
+  emits: ['focus', 'input'],
 };
 </script>

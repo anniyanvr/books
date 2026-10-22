@@ -1,226 +1,267 @@
 <template>
-  <div class="border-l h-full">
-    <div class="flex items-center justify-between px-4 pt-4">
-      <div class="flex items-center">
-        <Button :icon="true" @click="routeToPrevious">
-          <feather-icon name="x" class="w-4 h-4" />
-        </Button>
-        <span v-if="statusText" class="ml-2 text-base text-gray-600">{{
-          statusText
-        }}</span>
-      </div>
-      <div class="flex items-stretch">
-        <DropdownWithActions :actions="actions" />
-        <StatusBadge :status="status" />
-        <Button
-          :icon="true"
-          @click="insertDoc"
-          type="primary"
-          v-if="doc && doc._notInserted"
-          class="ml-2 text-white text-xs"
-        >
-          {{ _('Save') }}
-        </Button>
-        <Button
-          :icon="true"
-          @click="submitDoc"
-          type="primary"
-          v-if="
-            meta &&
-            meta.isSubmittable &&
-            doc &&
-            !doc.submitted &&
-            !doc._notInserted &&
-            !(doc.cancelled || false)
-          "
-          class="ml-2 text-white text-xs"
-        >
-          {{ _('Submit') }}
-        </Button>
-      </div>
+  <div
+    class="
+      border-s
+      dark:border-gray-800
+      h-full
+      overflow-auto
+      w-quick-edit
+      bg-white
+      dark:bg-gray-850
+    "
+  >
+    <!-- Quick edit Tool bar -->
+    <div
+      class="
+        flex
+        items-center
+        justify-between
+        px-4
+        h-row-largest
+        sticky
+        top-0
+        bg-white
+        dark:bg-gray-850
+      "
+      style="z-index: 1"
+    >
+      <!-- Close Button  -->
+      <Button :icon="true" @click="routeToPrevious">
+        <feather-icon name="x" class="w-4 h-4" />
+      </Button>
+
+      <!-- Save & Submit Buttons -->
+      <Button v-if="doc?.canSave" :icon="true" type="primary" @click="sync">
+        {{ t`Save` }}
+      </Button>
+      <Button
+        v-else-if="doc?.canSubmit"
+        :icon="true"
+        type="primary"
+        @click="submit"
+      >
+        {{ t`Submit` }}
+      </Button>
     </div>
-    <div class="px-4 pt-2 pb-4 flex-center" v-if="doc">
-      <div class="flex flex-col items-center">
-        <FormControl
-          v-if="imageField"
-          :df="imageField"
-          :value="doc[imageField.fieldname]"
-          @change="(value) => valueChange(imageField, value)"
-          size="small"
-          class="mb-1"
-          :letter-placeholder="
-            // for AttachImage field
-            doc[titleField.fieldname] ? doc[titleField.fieldname][0] : null
-          "
-        />
-        <FormControl
-          input-class="text-center"
-          ref="titleControl"
-          v-if="titleField"
-          :df="titleField"
-          :value="doc[titleField.fieldname]"
-          @change="(value) => valueChange(titleField, value)"
-          @input="setTitleSize"
-        />
-      </div>
+
+    <!-- Name and image -->
+    <div
+      v-if="doc && (titleField || imageField)"
+      class="items-center border-b border-t dark:border-gray-800"
+      :class="imageField ? 'grid' : 'flex justify-center'"
+      :style="{
+        height: `calc(var(--h-row-mid) * ${!!imageField ? '2 + 1px' : '1'})`,
+        gridTemplateColumns: `minmax(0, 1.1fr) minmax(0, 2fr)`,
+      }"
+    >
+      <AttachImage
+        v-if="imageField"
+        class="ms-4"
+        :df="imageField"
+        :value="String(doc[imageField.fieldname] ?? '')"
+        :letter-placeholder="letterPlaceHolder"
+        @change="(value) => valueChange(imageField as Field, value)"
+      />
+      <FormControl
+        v-if="titleField"
+        ref="titleControl"
+        :class="!!imageField ? 'me-4' : 'w-full mx-4'"
+        :input-class="[
+          'font-semibold text-xl',
+          !!imageField ? '' : 'text-center',
+        ]"
+        size="small"
+        :df="titleField"
+        :value="doc[titleField.fieldname]"
+        :read-only="doc.inserted || doc.schema.naming !== 'manual'"
+        @change="(value) => valueChange(titleField as Field, value)"
+      />
     </div>
+
+    <!-- Rest of the form -->
     <TwoColumnForm
-      ref="form"
       v-if="doc"
+      ref="form"
+      class="w-full"
       :doc="doc"
       :fields="fields"
-      :autosave="true"
       :column-ratio="[1.1, 2]"
     />
-    <component v-if="doc && quickEditWidget" :is="quickEditWidget" />
   </div>
 </template>
-
-<script>
-import frappe from 'frappejs';
-import { _ } from 'frappejs';
-import Button from '@/components/Button';
-import StatusBadge from '@/components/StatusBadge';
-import FormControl from '@/components/Controls/FormControl';
-import TwoColumnForm from '@/components/TwoColumnForm';
-import DropdownWithActions from '@/components/DropdownWithActions';
+<script lang="ts">
+import { DocValue } from 'fyo/core/types';
+import { Field, Schema } from 'schemas/types';
+import Button from 'src/components/Button.vue';
+import AttachImage from 'src/components/Controls/AttachImage.vue';
+import FormControl from 'src/components/Controls/FormControl.vue';
+import TwoColumnForm from 'src/components/TwoColumnForm.vue';
+import { fyo } from 'src/initFyo';
+import { shortcutsKey } from 'src/utils/injectionKeys';
+import { DocRef } from 'src/utils/types';
 import {
-  openQuickEdit,
-  getActionsForDocument,
-  handleErrorWithDialog,
-} from '@/utils';
+  commonDocSubmit,
+  commonDocSync,
+  focusOrSelectFormControl,
+} from 'src/utils/ui';
+import { useDocShortcuts } from 'src/utils/vueUtils';
+import { computed, defineComponent, inject, ref } from 'vue';
 
-export default {
+export default defineComponent({
   name: 'QuickEditForm',
-  props: ['doctype', 'name', 'values', 'hideFields'],
   components: {
     Button,
     FormControl,
-    StatusBadge,
     TwoColumnForm,
-    DropdownWithActions,
+    AttachImage,
   },
   provide() {
-    let vm = this;
     return {
-      doctype: this.doctype,
-      name: this.name,
-      get doc() {
-        return vm.doc;
-      },
+      doc: computed(() => this.doc),
+    };
+  },
+  props: {
+    name: { type: String, required: true },
+    schemaName: { type: String, required: true },
+    hideFields: { type: Array, default: () => [] },
+    showFields: { type: Array, default: () => [] },
+  },
+  emits: ['close'],
+  setup() {
+    const doc = ref(null) as DocRef;
+    const shortcuts = inject(shortcutsKey);
+
+    let context = 'QuickEditForm';
+    if (shortcuts) {
+      context = useDocShortcuts(shortcuts, doc, context, true);
+    }
+
+    return {
+      form: ref<InstanceType<typeof TwoColumnForm> | null>(null),
+      doc,
+      context,
+      shortcuts,
     };
   },
   data() {
     return {
-      doc: null,
       titleField: null,
       imageField: null,
-      statusText: null,
+    } as {
+      titleField: null | Field;
+      imageField: null | Field;
     };
   },
-  async created() {
-    await this.fetchMetaAndDoc();
-  },
   computed: {
-    meta() {
-      return frappe.getMeta(this.doctype);
-    },
-    status() {
-      if (this.doc && this.doc._notInserted) {
-        return "Draft";
+    letterPlaceHolder() {
+      if (!this.doc) {
+        return '';
       }
-      return "";
+
+      const fn = this.titleField?.fieldname ?? 'name';
+      const value = this.doc.get(fn);
+      if (typeof value === 'string') {
+        return value[0];
+      }
+
+      return '';
+    },
+    schema(): Schema {
+      return fyo.schemaMap[this.schemaName]!;
     },
     fields() {
-      return this.meta
-        .getQuickEditFields()
-        .filter((df) => !(this.hideFields || []).includes(df.fieldname));
-    },
-    actions() {
-      return getActionsForDocument(this.doc);
-    },
-    quickEditWidget() {
-      if (!this.meta.quickEditWidget) {
-        return null;
+      if (!this.schema) {
+        return [];
       }
-      return this.meta.quickEditWidget(this.doc);
+
+      const fieldnames = (this.schema.quickEditFields ?? ['name']).filter(
+        (f) => !this.hideFields.includes(f)
+      );
+
+      if (this.showFields?.length) {
+        fieldnames.push(
+          ...this.schema.fields
+            .map((f) => f.fieldname)
+            .filter((f) => this.showFields.includes(f))
+        );
+      }
+
+      return fieldnames.map((f) => fyo.getField(this.schemaName, f));
     },
+  },
+  activated() {
+    this.setShortcuts();
+  },
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
+  async mounted() {
+    await this.initialize();
+
+    if (fyo.store.isDevelopment) {
+      // @ts-ignore
+      window.qef = this;
+    }
+
+    this.setShortcuts();
   },
   methods: {
-    async fetchMetaAndDoc() {
-      this.titleField = this.meta.getField(this.meta.titleField);
-      this.imageField = this.meta.getField('image');
-      await this.fetchDoc();
-
-      // setup the title field
-      if (this.doc && this.doc.isNew() && this.doc[this.titleField.fieldname]) {
-        if (!this.titleField.readOnly) {
-          this.doc.set(this.titleField.fieldname, '');
-          setTimeout(() => {
-            this.$refs.titleControl.focus();
-          }, 300);
-        } else {
-          this.doc.set(this.titleField.fieldname, 'New ' + this.doc.doctype);
-        }
-      }
-
-      // set default values
-      if (this.values) {
-        this.doc.set(this.values);
-      }
-
-      // set title size
-      this.setTitleSize();
+    setShortcuts() {
+      this.shortcuts?.set(this.context, ['Escape'], async () => {
+        await this.routeToPrevious();
+      });
     },
-    async fetchDoc() {
+    async initialize() {
+      if (!this.schema) {
+        return;
+      }
+
+      this.setFields();
+      await this.setDoc();
+      if (!this.doc) {
+        return;
+      }
+
+      focusOrSelectFormControl(this.doc, this.$refs.titleControl, false);
+    },
+    setFields() {
+      const titleFieldName = this.schema.titleField ?? 'name';
+      this.titleField = fyo.getField(this.schemaName, titleFieldName) ?? null;
+      this.imageField = fyo.getField(this.schemaName, 'image') ?? null;
+    },
+    async setDoc() {
       try {
-        this.doc = await frappe.getDoc(this.doctype, this.name);
+        this.doc = await fyo.doc.getDoc(this.schemaName, this.name);
+      } catch (e) {
+        return this.$router.back();
+      }
+    },
+    valueChange(field: Field, value: DocValue) {
+      this.form?.onChange(field, value);
+    },
+    async sync() {
+      if (!this.doc) {
+        return;
+      }
 
-        this.doc.once('afterRename', () => {
-          openQuickEdit({
-            doctype: this.doctype,
-            name: this.doc.name,
-          });
-        });
-        this.doc.on('beforeUpdate', () => {
-          this.statusText = _('Saving...');
-        });
-        this.doc.on('afterUpdate', () => {
-          setTimeout(() => {
-            this.statusText = null;
-          }, 500);
-        });
-      } catch (e) {
-        this.$router.back();
+      await commonDocSync(this.doc);
+    },
+    async submit() {
+      if (!this.doc) {
+        return;
       }
+
+      await commonDocSubmit(this.doc);
     },
-    valueChange(df, value) {
-      this.$refs.form.onChange(df, value);
-    },
-    insertDoc() {
-      this.$refs.form.insert();
-    },
-    async submitDoc() {
-      try {
-        await this.$refs.form.submit();
-      } catch (e) {
-        this.statusText = null;
+    async routeToPrevious() {
+      if (this.doc?.dirty && this.doc?.inserted) {
+        await this.doc.load();
       }
-    },
-    routeToPrevious() {
+
+      if (this.doc && this.doc.notInserted) {
+        await this.doc.delete();
+      }
+
       this.$router.back();
     },
-    setTitleSize() {
-      if (this.$refs.titleControl) {
-        let input = this.$refs.titleControl.getInput();
-        let value = input.value;
-        let valueLength = (value || '').length + 1;
-        if (valueLength < 7) {
-          valueLength = 7;
-        }
-        input.size = valueLength;
-      }
-    },
   },
-};
+});
 </script>

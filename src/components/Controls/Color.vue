@@ -1,68 +1,80 @@
 <template>
   <div>
-    <div class="text-gray-600 text-sm mb-1" v-if="showLabel">
+    <div v-if="showLabel" :class="labelClasses">
       {{ df.label }}
     </div>
     <Popover placement="bottom-end">
-      <template v-slot:target="{ togglePopover }">
+      <template #target="{ togglePopover }">
         <div
           tabindex="0"
-          :class="inputClasses"
+          :class="[inputClasses, containerClasses]"
           @click="!isReadOnly && togglePopover()"
         >
           <div class="flex items-center">
             <div
               v-if="value"
-              class="w-3 h-3 rounded mr-1"
+              class="w-3 h-3 rounded me-1"
               :style="{ backgroundColor: value }"
             ></div>
             <span v-if="value">
               {{ selectedColorLabel }}
             </span>
-            <span class="text-gray-400" v-else>
+            <span v-else class="text-gray-400 dark:text-gray-600">
               {{ inputPlaceholder }}
             </span>
           </div>
         </div>
       </template>
-      <div class="text-sm py-3 px-2 text-center" slot="content">
-        <div>
-          <Row class="border-none" :column-count="5" gap="0.5rem">
-            <div
-              v-for="color in colors"
-              :key="color.value"
-              class="w-4 h-4 rounded cursor-pointer"
-              :style="{ backgroundColor: color.value }"
-              @click="setColorValue(color.value)"
-            ></div>
-          </Row>
+      <template #content>
+        <div class="text-sm p-2 text-center">
+          <div>
+            <Row :column-count="5" gap="0.5rem">
+              <div
+                v-for="color in colors"
+                :key="color.value"
+                class="w-4 h-4 rounded cursor-pointer"
+                :style="{ backgroundColor: color.value }"
+                @click="setColorValue(color.value)"
+              ></div>
+            </Row>
+          </div>
+          <div class="mt-3 w-28">
+            <input
+              type="color"
+              :placeholder="t`Custom Hex`"
+              :class="[inputClasses, containerClasses]"
+              :value="value"
+              style="padding: 0"
+              @change="(e) => setColorValue(e.target.value)"
+            />
+          </div>
         </div>
-        <div class="mt-3 w-28">
-          <input
-            type="text"
-            :placeholder="_('Custom Hex')"
-            :class="inputClasses"
-            :value="value"
-            @change="e => setColorValue(e.target.value)"
-            class="bg-gray-100"
-          />
-        </div>
-      </div>
+      </template>
     </Popover>
   </div>
 </template>
 
 <script>
-import Base from './Base';
-import Row from '@/components/Row';
-import Popover from '@/components/Popover';
+import Popover from 'src/components/Popover.vue';
+import Row from 'src/components/Row.vue';
+import Base from './Base.vue';
 
 export default {
   name: 'Color',
-  extends: Base,
   components: {
     Popover,
-    Row
+    Row,
+  },
+  extends: Base,
+  computed: {
+    colors() {
+      return this.df.options;
+    },
+    selectedColorLabel() {
+      if (!this.colors) return this.value;
+      const color = this.colors.find((c) => this.value === c.value);
+      return color ? color.label : this.value;
+    },
   },
   methods: {
     setColorValue(value) {
@@ -72,16 +84,7 @@ export default {
       if (/^#[0-9A-F]{6}$/i.test(value)) {
         this.triggerChange(value);
       }
-    }
-  },
-  computed: {
-    colors() {
-      return this.df.colors;
     },
-    selectedColorLabel() {
-      let color = this.colors.find(c => this.value === c.value);
-      return color ? color.label : this.value;
-    }
-  }
+  },
 };
 </script>

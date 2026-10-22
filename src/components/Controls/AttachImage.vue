@@ -1,21 +1,45 @@
 <template>
   <div
-    class="relative bg-white border rounded-full flex-center overflow-hidden cursor-pointer"
-    :class="{ 'w-20 h-20': size !== 'small', 'w-16 h-16': size === 'small' }"
-    @mouseover="showEdit = true"
-    @mouseleave="showEdit = false"
-    @click="openFileSelector"
+    class="
+      relative
+      bg-white
+      dark:bg-gray-900
+      border
+      dark:border-gray-800
+      flex-center
+      overflow-hidden
+      group
+    "
+    :class="{
+      rounded: size === 'form',
+      'w-20 h-20 rounded-full': size !== 'small' && size !== 'form',
+      'w-12 h-12 rounded-full': size === 'small',
+    }"
+    :title="df?.label"
+    :style="imageSizeStyle"
   >
-    <template v-if="!value">
+    <img v-if="value" :src="value" />
+    <div v-else :class="[!isReadOnly ? 'group-hover:opacity-90' : '']">
       <div
         v-if="letterPlaceholder"
-        class="bg-gray-500 flex h-full items-center justify-center text-white w-full text-4xl"
+        class="
+          flex
+          h-full
+          items-center
+          justify-center
+          text-gray-400
+          dark:text-gray-600
+          font-semibold
+          w-full
+          text-4xl
+          select-none
+        "
       >
         {{ letterPlaceholder }}
       </div>
       <svg
         v-else
-        class="w-8 h-8 text-gray-500"
+        class="w-6 h-6 text-gray-300 dark:text-gray-600"
         viewBox="0 0 24 21"
         xmlns="http://www.w3.org/2000/svg"
       >
@@ -25,63 +49,92 @@
           fill-rule="nonzero"
         />
       </svg>
-    </template>
-    <div v-else>
-      <img :src="value" />
     </div>
     <div
-      v-show="showEdit"
-      class="absolute inset-x-0 bottom-0 text-white text-center text-xs pt-3 pb-1"
-      style="background-image: linear-gradient(-180deg, rgba(0,0,0,0.00) 0%, #a6a6a6 100%);"
+      class="hidden w-full h-full absolute justify-center items-end"
+      :class="[!isReadOnly ? 'group-hover:flex' : '']"
+      style="background: rgba(0, 0, 0, 0.2); backdrop-filter: blur(2px)"
     >
-      {{ _('Edit') }}
+      <button
+        class="bg-gray-100 dark:bg-gray-800 p-0.5 rounded mb-1"
+        @click="handleClick"
+      >
+        <FeatherIcon
+          :name="shouldClear ? 'x' : 'upload'"
+          class="w-4 h-4 text-gray-600 dark:text-gray-400"
+        />
+      </button>
     </div>
   </div>
 </template>
+<script lang="ts">
+import { Field } from 'schemas/types';
+import { fyo } from 'src/initFyo';
+import { getDataURL } from 'src/utils/misc';
+import { defineComponent, PropType } from 'vue';
+import FeatherIcon from '../FeatherIcon.vue';
+import Base from './Base.vue';
 
-<script>
-import frappe from 'frappejs';
-import { ipcRenderer } from 'electron';
-import Base from './Base';
-import { IPC_ACTIONS } from '@/messages'
-import fs from 'fs';
-import path from 'path';
+const mime_types: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+};
 
-export default {
+export default defineComponent({
   name: 'AttachImage',
+  components: { FeatherIcon },
   extends: Base,
-  props: ['letterPlaceholder'],
-  data() {
-    return {
-      showEdit: false
-    };
+  props: {
+    letterPlaceholder: { type: String, default: '' },
+    value: { type: String, default: '' },
+    df: { type: Object as PropType<Field> },
+  },
+  computed: {
+    imageSizeStyle() {
+      if (this.size === 'form') {
+        return { width: '135px', height: '135px' };
+      }
+      return {};
+    },
+    shouldClear() {
+      return !!this.value;
+    },
   },
   methods: {
-    async openFileSelector() {
+    async handleClick() {
+      if (this.value) {
+        return await this.clearImage();
+      }
+      return await this.selectImage();
+    },
+    async clearImage() {
+      // @ts-ignore
+      this.triggerChange(null);
+    },
+    async selectImage() {
+      if (this.isReadOnly) {
+        return;
+      }
       const options = {
-        title: frappe._('Select Image'),
-        properties: ['openFile'],
-        filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+        title: fyo.t`Select Image`,
+        filters: [{ name: 'Image', extensions: Object.keys(mime_types) }],
       };
 
-      const { filePaths } = await ipcRenderer.invoke(IPC_ACTIONS.GET_OPEN_FILEPATH, options);
-      if (filePaths && filePaths[0]) {
-        let dataURL = await this.getDataURL(filePaths[0]);
-        this.triggerChange(dataURL);
+      const { name, success, data } = await ipc.selectFile(options);
+
+      if (!success) {
+        return;
       }
+      const extension = name.split('.').at(-1);
+      const type = mime_types[extension];
+      const dataURL = await getDataURL(type, data);
+
+      // @ts-ignore
+      this.triggerChange(dataURL);
     },
-    getDataURL(filePath) {
-      let typedArray = fs.readFileSync(filePath);
-      let extension = path.extname(filePath).slice(1);
-      let blob = new Blob([typedArray.buffer], { type: 'image/' + extension });
-      return new Promise(resolve => {
-        let fr = new FileReader();
-        fr.addEventListener('loadend', () => {
-          resolve(fr.result);
-        });
-        fr.readAsDataURL(blob);
-      });
-    }
-  }
-};
+  },
+});
 </script>

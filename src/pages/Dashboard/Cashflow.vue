@@ -1,167 +1,188 @@
 <template>
-  <div class="mt-4 mx-4">
-    <template v-if="hasData">
-      <div class="flex items-center justify-between">
-        <div class="font-medium">{{ _('Cashflow') }}</div>
-        <div class="flex text-base">
-          <div class="flex items-center">
-            <span class="w-3 h-3 rounded-sm inline-block bg-blue-500"></span>
-            <span class="ml-2">{{ _('Inflow') }}</span>
-          </div>
-          <div class="flex items-center ml-6">
-            <span class="w-3 h-3 rounded-sm inline-block bg-gray-500"></span>
-            <span class="ml-2">{{ _('Outflow') }}</span>
-          </div>
-        </div>
-        <PeriodSelector :value="period" @change="(value) => (period = value)" />
+  <div>
+    <!-- Title and Period Selector -->
+    <div class="flex items-center justify-between">
+      <div class="font-semibold text-base dark:text-white">
+        {{ t`Cashflow` }}
       </div>
-      <div class="chart-wrapper" ref="cashflow"></div>
-    </template>
-    <svg
-      v-else
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 889 240"
-      class="my-4"
-    >
-      <defs>
-        <linearGradient x1="50%" y1="100%" x2="50%" y2=".889%" id="a">
-          <stop stop-color="#FFF" stop-opacity="0" offset="0%" />
-          <stop stop-color="#F4F4F6" offset="100%" />
-        </linearGradient>
-      </defs>
-      <g fill="none" fill-rule="evenodd">
-        <text fill="#112B42" class="font-medium">
-          <tspan y="16">{{ _('Cashflow') }}</tspan>
-        </text>
-        <g fill="#E9E9ED">
-          <path d="M371 2h12v12h-12zM391 2h53v12h-53z" />
-          <g>
-            <path d="M453 2h12v12h-12zM473 2h53v12h-53z" />
-          </g>
-        </g>
-        <path
-          fill="#E9E9ED"
-          d="M0 41h19v12H0zM4 121h15v12H4zM2 81h17v12H2zM4 201h15v12H4zM3 161h16v12H3z"
-        />
-        <path
-          d="M37.25 211.25h849.5v1H37.25zM37.25 167.25h849.5v1H37.25zM37.25 127.25h849.5v1H37.25zM37.25 87.25h849.5v1H37.25zM37.25 47.25h849.5v1H37.25z"
-          stroke="#F6F7F9"
-          stroke-width=".5"
-        />
-        <g fill="#E9E9ED">
-          <path
-            d="M49 228h31v12H49zM122 228h31v12h-31zM195 228h31v12h-31zM268 228h31v12h-31zM341 228h31v12h-31zM414 228h31v12h-31zM487 228h31v12h-31zM560 228h31v12h-31zM633 228h31v12h-31zM706 228h31v12h-31zM779 228h31v12h-31zM852 228h31v12h-31z"
+
+      <!-- Chart Legend -->
+      <div v-if="hasData" class="flex text-base gap-8">
+        <div class="flex items-center gap-2">
+          <span
+            class="w-3 h-3 rounded-sm inline-block bg-blue-500 dark:bg-blue-600"
           />
-        </g>
-        <g fill-rule="nonzero">
-          <path
-            fill="url(#a)"
-            opacity=".5"
-            d="M12 34l78 73 73 12 74-37 73 36.167L383 126l73-55.5L529.223 98 602 0l73 75 73 2 73 34 29 41v25H0V25z"
-            transform="translate(37 35)"
+          <span class="text-gray-900 dark:text-gray-25">{{ t`Inflow` }}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span
+            class="w-3 h-3 rounded-sm inline-block bg-pink-500 dark:bg-pink-600"
           />
-          <path
-            stroke="#E9E9ED"
-            stroke-width="3"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M37 60l12 9 78 73 73 12 74-37 73 36.167L420 161l73-55.5 73.223 27.5L639 35l73 75 73 2 73 34 29 42"
-          />
-          <g>
-            <path
-              fill="url(#a)"
-              opacity=".5"
-              d="M12 44.599l78 31.345 73 5.152 74-26.192L310 .738l73 21.578 73 37.955 73.223 11.808L602 30l73 32.203 73 .86 73 14.598L850 58v48H0V40.734z"
-              transform="translate(37 106)"
-            />
-            <path
-              stroke="#E9E9ED"
-              stroke-width="3"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M37 146.734l12 3.865 78 31.345 73 5.152 74-26.192 73-54.166 73 21.578 73 37.955 73.223 11.808L639 136l73 32.203 73 .86 73 14.598L887 164"
-            />
-          </g>
-        </g>
-      </g>
-    </svg>
+          <span class="text-gray-900 dark:text-gray-25">{{ t`Outflow` }}</span>
+        </div>
+      </div>
+      <div v-else class="w-16 h-5 bg-gray-200 dark:bg-gray-700 rounded" />
+
+      <PeriodSelector
+        v-if="hasData"
+        :value="period"
+        :options="periodOptions"
+        @change="(value) => (period = value)"
+      />
+      <div v-else class="w-20 h-5 bg-gray-200 dark:bg-gray-700 rounded" />
+    </div>
+
+    <!-- Line Chart -->
+    <LineChart
+      v-if="chartData.points.length"
+      class="mt-4"
+      :aspect-ratio="4.15"
+      :colors="chartData.colors"
+      :grid-color="chartData.gridColor"
+      :font-color="chartData.fontColor"
+      :points="chartData.points"
+      :x-labels="chartData.xLabels"
+      :format="chartData.format"
+      :format-x="chartData.formatX"
+      :y-max="chartData.yMax"
+      :draw-labels="hasData"
+      :show-tooltip="hasData"
+    />
   </div>
 </template>
-<script>
-import frappe from 'frappejs';
-import { Chart } from 'frappe-charts';
-import PeriodSelector from './PeriodSelector';
-import Cashflow from '../../../reports/Cashflow/Cashflow';
-import { getDatesAndPeriodicity } from './getDatesAndPeriodicity';
+<script lang="ts">
+import { AccountTypeEnum } from 'models/baseModels/Account/types';
+import { ModelNameEnum } from 'models/types';
+import LineChart from 'src/components/Charts/LineChart.vue';
+import { fyo } from 'src/initFyo';
+import { formatXLabels, getYMax } from 'src/utils/chart';
+import { uicolors } from 'src/utils/colors';
+import { getDatesAndPeriodList } from 'src/utils/misc';
+import DashboardChartBase from './BaseDashboardChart.vue';
+import PeriodSelector from './PeriodSelector.vue';
+import { defineComponent } from 'vue';
+import { getMapFromList } from 'utils/index';
+import { PeriodKey } from 'src/utils/types';
 
-export default {
+// Linting broken in this file cause of `extends: ...`
+/* 
+  eslint-disable @typescript-eslint/no-unsafe-argument, 
+  @typescript-eslint/no-unsafe-return
+*/
+
+export default defineComponent({
   name: 'Cashflow',
   components: {
     PeriodSelector,
+    LineChart,
   },
-  data: () => ({ period: 'This Year', hasData: false }),
-  watch: {
-    period: 'render',
+  extends: DashboardChartBase,
+  props: {
+    darkMode: { type: Boolean, default: false },
   },
-  activated() {
-    this.render();
-  },
-  methods: {
-    async render() {
-      let { fromDate, toDate, periodicity } = await getDatesAndPeriodicity(
-        this.period
+  data: () => ({
+    data: [] as { inflow: number; outflow: number; yearmonth: string }[],
+    periodList: [],
+    periodOptions: ['This Year', 'This Quarter', 'YTD'],
+    hasData: false,
+  }),
+  computed: {
+    chartData() {
+      let data = this.data;
+      let colors = [
+        uicolors.blue[this.darkMode ? '600' : '500'],
+        uicolors.pink[this.darkMode ? '600' : '500'],
+      ];
+      if (!this.hasData) {
+        data = dummyData;
+        colors = [
+          this.darkMode ? uicolors.gray['700'] : uicolors.gray['200'],
+          this.darkMode ? uicolors.gray['800'] : uicolors.gray['100'],
+        ];
+      }
+
+      const xLabels = data.map((cf) => cf.yearmonth);
+      const points = (['inflow', 'outflow'] as const).map((k) =>
+        data.map((d) => d[k])
       );
 
-      let { data, periodList } = await new Cashflow().run({
-        fromDate,
-        toDate,
-        periodicity,
-      });
-
-      let totalInflow = data.reduce((sum, d) => d.inflow + sum, 0);
-      let totalOutflow = data.reduce((sum, d) => d.outflow + sum, 0);
-      this.hasData = !(totalInflow === 0 && totalOutflow === 0);
-      if (!this.hasData) return;
-
-      this.$nextTick(() => this.renderChart(periodList, data));
-    },
-
-    renderChart(periodList, data) {
-      new Chart(this.$refs['cashflow'], {
-        title: '',
-        type: 'line',
-        animate: false,
-        height: 240,
-        colors: ['#2490EF', '#B7BFC6'],
-        axisOptions: {
-          xAxisMode: 'tick',
-          shortenYAxisNumbers: true,
-        },
-        lineOptions: {
-          regionFill: 1,
-          hideDots: 1,
-          heatLine: 1,
-        },
-        tooltipOptions: {
-          formatTooltipY: (value) => frappe.format(value, 'Currency'),
-        },
-        data: {
-          labels: periodList.map((p) => p.split(' ')[0]),
-          datasets: [
-            {
-              name: 'Inflow',
-              chartType: 'line',
-              values: data.map((period) => period.inflow),
-            },
-            {
-              name: 'Outflow',
-              chartType: 'line',
-              values: data.map((period) => period.outflow),
-            },
-          ],
-        },
-      });
+      const format = (value: number) => fyo.format(value ?? 0, 'Currency');
+      const yMax = getYMax(points);
+      return {
+        points,
+        xLabels,
+        colors,
+        format,
+        yMax,
+        formatX: formatXLabels,
+        gridColor: this.darkMode ? 'rgba(200, 200, 200, 0.2)' : undefined,
+        fontColor: this.darkMode ? uicolors.gray['400'] : undefined,
+      };
     },
   },
-};
+  async activated() {
+    await this.setData();
+    if (!this.hasData) {
+      await this.setHasData();
+    }
+  },
+  methods: {
+    async setData() {
+      const { periodList, fromDate, toDate } = getDatesAndPeriodList(
+        this.period as PeriodKey
+      );
+
+      const data = await fyo.db.getCashflow(fromDate.toISO(), toDate.toISO());
+      const dataMap = getMapFromList(data, 'yearmonth');
+      this.data = periodList.map((p) => {
+        const key = p.toFormat('yyyy-MM');
+        const item = dataMap[key];
+        if (item) {
+          return item;
+        }
+
+        return {
+          inflow: 0,
+          outflow: 0,
+          yearmonth: key,
+        };
+      });
+    },
+    async setHasData() {
+      const accounts = await fyo.db.getAllRaw('Account', {
+        filters: {
+          accountType: ['in', [AccountTypeEnum.Cash, AccountTypeEnum.Bank]],
+        },
+      });
+      const accountNames = accounts.map((a) => a.name as string);
+      const count = await fyo.db.count(ModelNameEnum.AccountingLedgerEntry, {
+        filters: { account: ['in', accountNames] },
+      });
+      this.hasData = count > 0;
+    },
+  },
+});
+
+const dummyData = [
+  {
+    inflow: 100,
+    outflow: 250,
+    yearmonth: '2021-05',
+  },
+  {
+    inflow: 350,
+    outflow: 100,
+    yearmonth: '2021-06',
+  },
+  {
+    inflow: 50,
+    outflow: 300,
+    yearmonth: '2021-07',
+  },
+  {
+    inflow: 320,
+    outflow: 100,
+    yearmonth: '2021-08',
+  },
+];
 </script>

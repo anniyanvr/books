@@ -1,188 +1,353 @@
 <template>
   <div
     class="
-      pt-6
-      pb-2
-      px-2
+      py-2
       h-full
-      block
       flex
       justify-between
       flex-col
-      bg-gray-100
+      bg-gray-25
+      dark:bg-gray-900
+      relative
     "
     :class="{
       'window-drag': platform !== 'Windows',
     }"
   >
-    <div class="window-no-drag">
-      <WindowControls v-if="platform === 'Mac'" class="px-3 mb-6" />
-      <div class="px-3">
-        <h6 class="text-lg font-semibold" @click="routeTo('/')">
+    <div>
+      <!-- Company name -->
+      <div
+        class="px-4 flex flex-row items-center justify-between mb-4"
+        :class="
+          platform === 'Mac' && languageDirection === 'ltr' ? 'mt-10' : 'mt-2'
+        "
+      >
+        <h6
+          data-testid="company-name"
+          class="
+            font-semibold
+            dark:text-gray-200
+            whitespace-nowrap
+            overflow-auto
+            no-scrollbar
+            select-none
+          "
+        >
           {{ companyName }}
         </h6>
       </div>
-      <div class="mt-3">
-        <div class="mt-1 first:mt-0" v-for="group in groups" :key="group.title">
+
+      <!-- Sidebar Items -->
+      <div v-for="group in groups" :key="group.label">
+        <div
+          class="
+            px-4
+            flex
+            items-center
+            cursor-pointer
+            hover:bg-gray-100
+            dark:hover:bg-gray-875
+            h-10
+          "
+          :class="
+            isGroupActive(group) && !group.items
+              ? 'bg-gray-100 dark:bg-gray-875 border-s-4 border-gray-800 dark:border-gray-100'
+              : ''
+          "
+          @click="routeToSidebarItem(group)"
+        >
+          <Icon
+            class="flex-shrink-0"
+            :name="group.icon"
+            :size="group.iconSize || '18'"
+            :height="group.iconHeight ?? 0"
+            :active="!!isGroupActive(group)"
+            :darkMode="darkMode"
+            :class="isGroupActive(group) && !group.items ? '-ms-1' : ''"
+          />
           <div
+            class="ms-2 text-lg text-gray-700"
+            :class="
+              isGroupActive(group) && !group.items
+                ? 'text-gray-900 dark:text-gray-25'
+                : 'dark:text-gray-300'
+            "
+          >
+            {{ group.label }}
+          </div>
+        </div>
+
+        <!-- Expanded Group -->
+        <div v-if="group.items && isGroupActive(group)">
+          <div
+            v-for="item in group.items"
+            :key="item.label"
             class="
-              px-3
-              py-2
+              text-base
+              h-10
+              ps-10
+              cursor-pointer
               flex
               items-center
-              rounded-lg
-              cursor-pointer
-              hover:bg-white
+              hover:bg-gray-100
+              dark:hover:bg-gray-875
             "
-            :class="isActiveGroup(group) && !group.items ? 'bg-white' : ''"
-            @click="onGroupClick(group)"
+            :class="
+              isItemActive(item)
+                ? 'bg-gray-100 dark:bg-gray-875 text-gray-900 dark:text-gray-100 border-s-4 border-gray-800 dark:border-gray-100'
+                : 'text-gray-700 dark:text-gray-400'
+            "
+            @click="routeToSidebarItem(item)"
           >
-            <component
-              :is="group.icon"
-              class="w-5 h-5"
-              :active="isActiveGroup(group)"
-            />
-            <div
-              class="ml-2 text-lg text-gray-900"
-              :class="isActiveGroup(group) && !group.items && 'text-blue-500'"
-            >
-              {{ group.title }}
-            </div>
-          </div>
-          <div v-if="group.items && isActiveGroup(group)">
-            <div
-              v-for="item in group.items"
-              :key="item.label"
-              class="
-                mt-1
-                first:mt-0
-                text-base text-gray-800
-                py-1
-                pl-10
-                rounded
-                cursor-pointer
-                hover:bg-white
-              "
-              :class="itemActiveClass(item)"
-              @click="onItemClick(item)"
-            >
+            <p :style="isItemActive(item) ? 'margin-left: -4px' : ''">
               {{ item.label }}
-            </div>
+            </p>
           </div>
         </div>
       </div>
     </div>
-    <div class="px-5 window-no-drag">
+
+    <!-- Report Issue and DB Switcher -->
+    <div class="window-no-drag flex flex-col gap-2 py-2 px-4">
       <button
-        class="pb-1 text-sm text-gray-600 hover:text-gray-800 truncate"
+        class="
+          flex
+          text-sm text-gray-600
+          dark:text-gray-500
+          hover:text-gray-800
+          dark:hover:text-gray-400
+          gap-1
+          items-center
+        "
+        @click="openDocumentation"
+      >
+        <feather-icon name="help-circle" class="h-4 w-4 flex-shrink-0" />
+        <p>
+          {{ t`Help` }}
+        </p>
+      </button>
+
+      <button
+        class="
+          flex
+          text-sm text-gray-600
+          dark:text-gray-500
+          hover:text-gray-800
+          dark:hover:text-gray-400
+          gap-1
+          items-center
+        "
+        @click="viewShortcuts = true"
+      >
+        <feather-icon name="command" class="h-4 w-4 flex-shrink-0" />
+        <p>{{ t`Shortcuts` }}</p>
+      </button>
+
+      <button
+        data-testid="change-db"
+        class="
+          flex
+          text-sm text-gray-600
+          dark:text-gray-500
+          hover:text-gray-800
+          dark:hover:text-gray-400
+          gap-1
+          items-center
+        "
         @click="$emit('change-db-file')"
       >
-        {{ dbPath }}
+        <feather-icon name="database" class="h-4 w-4 flex-shrink-0" />
+        <p>{{ t`Change DB` }}</p>
       </button>
-      <p class="pb-3 text-sm text-gray-600">v{{ appVersion }}</p>
+
+      <button
+        class="
+          flex
+          text-sm text-gray-600
+          dark:text-gray-500
+          hover:text-gray-800
+          dark:hover:text-gray-400
+          gap-1
+          items-center
+        "
+        @click="() => reportIssue()"
+      >
+        <feather-icon name="flag" class="h-4 w-4 flex-shrink-0" />
+        <p>
+          {{ t`Report Issue` }}
+        </p>
+      </button>
+
+      <p
+        v-if="showDevMode"
+        class="text-xs text-gray-500 select-none cursor-pointer"
+        @click="showDevMode = false"
+        title="Open dev tools with Ctrl+Shift+I"
+      >
+        dev mode
+      </p>
     </div>
+
+    <!-- Hide Sidebar Button -->
+    <button
+      class="
+        absolute
+        bottom-0
+        end-0
+        text-gray-600
+        dark:text-gray-500
+        hover:bg-gray-100
+        dark:hover:bg-gray-875
+        rounded
+        p-1
+        m-4
+        rtl-rotate-180
+      "
+      @click="() => toggleSidebar()"
+    >
+      <feather-icon name="chevrons-left" class="w-4 h-4" />
+    </button>
+
+    <Modal :open-modal="viewShortcuts" @closemodal="viewShortcuts = false">
+      <ShortcutsHelper class="w-form" />
+    </Modal>
   </div>
 </template>
-<script>
-import sidebarConfig from '../sidebarConfig';
-import Button from '@/components/Button';
-import WindowControls from './WindowControls';
-import { routeTo } from '@/utils';
-import path from 'path';
+<script lang="ts">
+import { reportIssue } from 'src/errorHandling';
+import { fyo } from 'src/initFyo';
+import { languageDirectionKey, shortcutsKey } from 'src/utils/injectionKeys';
+import { docsPathRef } from 'src/utils/refs';
+import { getSidebarConfig } from 'src/utils/sidebarConfig';
+import { SidebarConfig, SidebarItem, SidebarRoot } from 'src/utils/types';
+import { routeTo, toggleSidebar } from 'src/utils/ui';
+import { defineComponent, inject } from 'vue';
 import router from '../router';
+import Icon from './Icon.vue';
+import Modal from './Modal.vue';
+import ShortcutsHelper from './ShortcutsHelper.vue';
 
-export default {
-  components: [Button],
+const COMPONENT_NAME = 'Sidebar';
+
+export default defineComponent({
+  components: {
+    Icon,
+    Modal,
+    ShortcutsHelper,
+  },
+  props: {
+    darkMode: { type: Boolean, default: false },
+  },
+  emits: ['change-db-file', 'toggle-darkmode'],
+  setup() {
+    return {
+      languageDirection: inject(languageDirectionKey),
+      shortcuts: inject(shortcutsKey),
+    };
+  },
   data() {
     return {
       companyName: '',
       groups: [],
+      viewShortcuts: false,
       activeGroup: null,
+      showDevMode: false,
+    } as {
+      companyName: string;
+      groups: SidebarConfig;
+      viewShortcuts: boolean;
+      activeGroup: null | SidebarRoot;
+      showDevMode: boolean;
     };
   },
   computed: {
     appVersion() {
-      return frappe.store.appVersion;
+      return fyo.store.appVersion;
     },
-    dbPath() {
-      const splits = frappe.db.dbPath.split(path.sep);
-      return path.join(...splits.slice(splits.length - 2));
-    },
-  },
-  components: {
-    WindowControls,
   },
   async mounted() {
-    this.companyName = await sidebarConfig.getTitle();
-    this.groups = sidebarConfig.groups.filter((group) => {
-      if (
-        group.route === '/get-started' &&
-        frappe.SystemSettings.hideGetStarted
-      ) {
-        return false;
-      }
-      return true;
-    });
+    const { companyName } = await fyo.doc.getDoc('AccountingSettings');
+    this.companyName = companyName as string;
+    this.groups = await getSidebarConfig();
 
     this.setActiveGroup();
     router.afterEach(() => {
       this.setActiveGroup();
     });
+
+    this.shortcuts?.shift.set(COMPONENT_NAME, ['KeyH'], () => {
+      if (document.body === document.activeElement) {
+        this.toggleSidebar();
+      }
+    });
+    this.shortcuts?.set(COMPONENT_NAME, ['F1'], () => this.openDocumentation());
+
+    this.showDevMode = this.fyo.store.isDevelopment;
+  },
+  unmounted() {
+    this.shortcuts?.delete(COMPONENT_NAME);
   },
   methods: {
     routeTo,
+    reportIssue,
+    toggleSidebar,
+    openDocumentation() {
+      ipc.openLink('https://docs.frappe.io/' + docsPathRef.value);
+    },
     setActiveGroup() {
-      const { fullPath } = this.$router.currentRoute;
+      const { fullPath } = this.$router.currentRoute.value;
       const fallBackGroup = this.activeGroup;
-      this.activeGroup = this.groups.find((g) => {
-        if (fullPath.startsWith(g.route) && g.route !== '/') {
-          return true;
-        }
-
-        if (g.route === fullPath) {
-          return true;
-        }
-
-        if (g.items) {
-          let activeItem = g.items.filter(
-            ({ route }) => route === fullPath || fullPath.startsWith(route)
-          );
-
-          if (activeItem.length) {
+      this.activeGroup =
+        this.groups.find((g) => {
+          if (fullPath.startsWith(g.route) && g.route !== '/') {
             return true;
           }
-        }
-      });
 
-      if (!this.activeGroup) {
-        this.activeGroup = fallBackGroup || this.groups[0];
-      }
+          if (g.route === fullPath) {
+            return true;
+          }
+
+          if (g.items) {
+            let activeItem = g.items.filter(
+              ({ route }) => route === fullPath || fullPath.startsWith(route)
+            );
+
+            if (activeItem.length) {
+              return true;
+            }
+          }
+        }) ??
+        fallBackGroup ??
+        this.groups[0];
     },
-    itemActiveClass(item) {
-      let { path: currentRoute, params } = this.$route;
-      let routeMatch = currentRoute === item.route;
-      let doctypeMatch = item.doctype && params.doctype === item.doctype;
-      return routeMatch || doctypeMatch ? 'bg-white text-blue-500' : '';
+    isItemActive(item: SidebarItem) {
+      const { path: currentRoute, params } = this.$route;
+      const routeMatch = currentRoute === item.route;
+
+      const schemaNameMatch =
+        item.schemaName && params.schemaName === item.schemaName;
+
+      const isMatch = routeMatch || schemaNameMatch;
+      if (params.name && item.schemaName && !isMatch) {
+        return currentRoute.includes(`${item.schemaName}/${params.name}`);
+      }
+
+      return isMatch;
     },
-    isActiveGroup(group) {
-      return this.activeGroup && group.title === this.activeGroup.title;
+    isGroupActive(group: SidebarRoot) {
+      return this.activeGroup && group.label === this.activeGroup.label;
     },
-    onGroupClick(group) {
-      if (group.action) {
-        group.action();
-      }
-      if (group.route) {
-        routeTo(group.route);
-      }
+    routeToSidebarItem(item: SidebarItem | SidebarRoot) {
+      routeTo(this.getPath(item));
     },
-    onItemClick(item) {
-      if (item.action) {
-        item.action();
+    getPath(item: SidebarItem | SidebarRoot) {
+      const { route: path, filters } = item;
+      if (!filters) {
+        return path;
       }
-      if (item.route) {
-        routeTo(item.route);
-      }
+
+      return { path, query: { filters: JSON.stringify(filters) } };
     },
   },
-};
+});
 </script>

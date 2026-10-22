@@ -1,4 +1,3 @@
-
 {
   "countryCode": "ae",
   "name": "U.A.E - Chart of Accounts",
@@ -386,7 +385,7 @@
         },
         "Duties and Taxes": {
           "accountType": "Tax",
-          "isGroup": 1
+          "isGroup": true
         },
         "Reservations & Credit Notes": {
           "Credit Notes": {

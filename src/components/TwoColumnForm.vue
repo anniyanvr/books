@@ -1,246 +1,157 @@
 <template>
-  <div class="text-sm" :class="{ 'border-t': !noBorder }">
+  <div class="text-sm">
     <template v-for="df in formFields">
-      <FormControl
-        :key="df.fieldname"
+      <!-- Table Field Form (Eg: PaymentFor) -->
+      <Table
         v-if="df.fieldtype === 'Table'"
+        :key="`${df.fieldname}-table`"
         ref="controls"
         size="small"
         :df="df"
-        :value="doc[df.fieldname]"
-        :read-only="evaluateReadOnly(df)"
-        @change="(value) => onChange(df, value)"
+        :value="(doc[df.fieldname] ?? []) as unknown[]"
+        @change="async (value) => await onChange(df, value)"
       />
-      <template v-else>
-        <template v-if="inlineEditField === df && inlineEditDoc">
-          <div class="border-b" :key="df.fieldname">
-            <TwoColumnForm
-              ref="inlineEditForm"
-              :doc="inlineEditDoc"
-              :fields="inlineEditFields"
-              :column-ratio="columnRatio"
-              :no-border="true"
-              :focus-first-input="true"
-              @error="(msg) => $emit('error', msg)"
-            />
-            <div class="flex px-4 pb-2">
-              <Button
-                class="w-1/2 text-gray-900"
-                @click="inlineEditField = null"
-              >
-                {{ _('Cancel') }}
-              </Button>
-              <Button
-                type="primary"
-                class="ml-2 w-1/2 text-white"
-                @click="saveInlineEditDoc"
-              >
-                {{ df.inlineSaveText || _('Save') }}
-              </Button>
-            </div>
-          </div>
-        </template>
+
+      <!-- Regular Field Form -->
+      <div
+        v-else
+        :key="`${df.fieldname}-regular`"
+        class="grid items-center border-b dark:border-gray-800"
+        :style="{
+          ...style,
+          height: getFieldHeight(df),
+        }"
+      >
+        <div class="ps-4 flex text-gray-600 dark:text-gray-400">
+          {{ df.label }}
+        </div>
+
         <div
-          :key="df.fieldname"
-          v-else
-          class="grid"
-          :class="{ 'border-b': !noBorder }"
-          :style="style"
+          class="py-2 pe-4"
+          :class="{
+            'ps-2': df.fieldtype === 'AttachImage',
+          }"
         >
-          <div class="py-2 pl-4 flex text-gray-600">
-            <div class="py-1">
-              {{ df.label }}
-            </div>
-          </div>
+          <FormControl
+            ref="controls"
+            size="small"
+            :df="df"
+            :value="doc[df.fieldname]"
+            :class="{ 'p-2': df.fieldtype === 'Check' }"
+            :text-end="false"
+            @change="async (value) => await onChange(df, value)"
+          />
           <div
-            class="py-2 pr-4"
-            @click="activateInlineEditing(df)"
-            :class="{
-              'pl-2': df.fieldtype === 'AttachImage',
-            }"
+            v-if="errors[df.fieldname]"
+            class="text-sm text-red-600 mt-2 ps-2"
           >
-            <FormControl
-              ref="controls"
-              size="small"
-              :df="df"
-              :value="
-                df.inline && doc.getLink(df.fieldname)
-                  ? doc.getLink(df.fieldname)[
-                      doc.getLink(df.fieldname).meta.inlineEditDisplayField ||
-                        'name'
-                    ]
-                  : doc[df.fieldname]
-              "
-              :class="{ 'p-2': df.fieldtype === 'Check' }"
-              :read-only="evaluateReadOnly(df)"
-              @change="(value) => onChange(df, value)"
-              @focus="activateInlineEditing(df)"
-              @new-doc="(newdoc) => onChange(df, newdoc.name)"
-            />
-            <div
-              class="text-sm text-red-600 mt-2 pl-2"
-              v-if="errors[df.fieldname]"
-            >
-              {{ errors[df.fieldname] }}
-            </div>
+            {{ errors[df.fieldname] }}
           </div>
         </div>
-      </template>
+      </div>
     </template>
   </div>
 </template>
-<script>
-import frappe from 'frappejs';
-import FormControl from '@/components/Controls/FormControl';
-import Button from '@/components/Button';
-import { getErrorMessage, handleErrorWithDialog } from '@/utils';
+<script lang="ts">
+import { Doc } from 'fyo/model/doc';
+import FormControl from 'src/components/Controls/FormControl.vue';
+import { fyo } from 'src/initFyo';
+import { getErrorMessage } from 'src/utils';
+import { evaluateHidden } from 'src/utils/doc';
+import Table from './Controls/Table.vue';
+import { defineComponent } from 'vue';
+import { Field } from 'schemas/types';
+import { PropType } from 'vue';
+import { DocValue } from 'fyo/core/types';
 
-let TwoColumnForm = {
+export default defineComponent({
   name: 'TwoColumnForm',
+  components: {
+    FormControl,
+    Table,
+  },
   props: {
-    doc: Object,
-    fields: Array,
-    autosave: Boolean,
+    doc: { type: Doc, required: true },
+    fields: { type: Array as PropType<Field[]>, default: () => [] },
     columnRatio: {
-      type: Array,
+      type: Array as PropType<number[]>,
       default: () => [1, 1],
     },
-    noBorder: Boolean,
-    focusFirstInput: Boolean,
   },
   data() {
     return {
-      inlineEditField: null,
-      inlineEditDoc: null,
-      inlineEditFields: null,
-      inlineEditDisplayField: null,
+      formFields: [],
       errors: {},
-    };
-  },
-  provide() {
-    return {
-      doctype: this.doc.doctype,
-      name: this.doc.name,
-      doc: this.doc,
-    };
-  },
-  components: {
-    FormControl,
-    Button,
-    TwoColumnForm: () => TwoColumnForm,
-  },
-  mounted() {
-    if (this.focusFirstInput) {
-      this.$refs['controls'][0].focus();
-    }
-  },
-  methods: {
-    evaluateBoolean(fieldProp, defaultValue) {
-      const type = typeof fieldProp;
-      switch (type) {
-        case 'undefined':
-          return defaultValue;
-        case 'function':
-          return fieldProp(this.doc);
-        default:
-          return !!fieldProp;
-      }
-    },
-    evaluateReadOnly(df) {
-      if (this.submitted) {
-        return true;
-      }
-      return this.evaluateBoolean(df.readOnly, false);
-    },
-    evaluateHidden(df) {
-      return this.evaluateBoolean(df.hidden, false);
-    },
-    onChange(df, value) {
-      if (value == null) {
-        return;
-      }
-
-      let oldValue = this.doc.get(df.fieldname);
-
-      if (oldValue === value) {
-        return;
-      }
-
-      // handle rename
-      if (this.autosave && df.fieldname === 'name' && !this.doc.isNew()) {
-        return this.doc.rename(value);
-      }
-
-      // reset error messages
-      this.$set(this.errors, df.fieldname, null);
-
-      this.doc.set(df.fieldname, value).catch((e) => {
-        // set error message for this field
-        this.$set(this.errors, df.fieldname, getErrorMessage(e, this.doc));
-      });
-
-      if (this.autosave && this.doc._dirty && !this.doc.isNew()) {
-        if (df.fieldtype === 'Table') {
-          return;
-        }
-        this.doc.update();
-      }
-    },
-    insertOrUpdate() {
-      return this.doc.insertOrUpdate().catch(this.handleError);
-    },
-    insert() {
-      return this.doc.insert().catch(this.handleError);
-    },
-    submit() {
-      return this.doc.submit().catch(this.handleError);
-    },
-    handleError(e) {
-      handleErrorWithDialog(e, this.doc);
-    },
-    async activateInlineEditing(df) {
-      if (df.inline) {
-        this.inlineEditField = df;
-        if (!this.doc[df.fieldname]) {
-          this.inlineEditDoc = await frappe.getNewDoc(df.target);
-          this.inlineEditDoc.once('afterInsert', () => {
-            this.onChange(df, this.inlineEditDoc.name);
-          });
-        } else {
-          this.inlineEditDoc = this.doc.getLink(df.fieldname);
-        }
-        this.inlineEditDisplayField =
-          this.doc.meta.inlineEditDisplayField || 'name';
-        this.inlineEditFields = frappe.getMeta(df.target).getQuickEditFields();
-      }
-    },
-    async saveInlineEditDoc() {
-      if (this.inlineEditDoc) {
-        await this.$refs.inlineEditForm[0].insertOrUpdate();
-        await this.doc.loadLinks();
-        this.inlineEditField = null;
-      }
-    },
+    } as { formFields: Field[]; errors: Record<string, string> };
   },
   computed: {
-    formFields() {
-      return (this.fields || this.doc.meta.getQuickEditFields()).filter(
-        (df) => !this.evaluateHidden(df)
-      );
-    },
     style() {
       let templateColumns = (this.columnRatio || [1, 1])
-        .map((r) => `${r}fr`)
+        .map((r) => `minmax(0, ${r}fr)`)
         .join(' ');
       return {
         'grid-template-columns': templateColumns,
       };
     },
-    submitted() {
-      return Boolean(this.doc.meta.isSubmittable && this.doc.submitted);
+  },
+  watch: {
+    doc() {
+      this.setFormFields();
     },
   },
-};
+  mounted() {
+    this.setFormFields();
+    if (fyo.store.isDevelopment) {
+      // @ts-ignore
+      window.tcf = this;
+    }
+  },
+  methods: {
+    getFieldHeight(field: Field) {
+      if (['AttachImage', 'Text'].includes(field.fieldtype)) {
+        return 'calc((var(--h-row-mid) + 1px) * 2)';
+      }
 
-export default TwoColumnForm;
+      if (this.errors[field.fieldname]) {
+        return 'calc((var(--h-row-mid) + 1px) * 2)';
+      }
+
+      return 'calc(var(--h-row-mid) + 1px)';
+    },
+    async onChange(field: Field, value: DocValue) {
+      const { fieldname } = field;
+      delete this.errors[fieldname];
+
+      let isSet = false;
+      try {
+        isSet = await this.doc.set(fieldname, value);
+      } catch (err) {
+        if (!(err instanceof Error)) {
+          return;
+        }
+
+        this.errors[fieldname] = getErrorMessage(err, this.doc);
+      }
+
+      if (isSet) {
+        this.setFormFields();
+      }
+    },
+    setFormFields() {
+      let fieldList = this.fields;
+
+      if (fieldList.length === 0) {
+        fieldList = this.doc.quickEditFields;
+      }
+
+      if (fieldList.length === 0) {
+        fieldList = this.doc.schema.fields.filter((f) => f.required);
+      }
+
+      this.formFields = fieldList.filter(
+        (field) => field && !evaluateHidden(field, this.doc)
+      );
+    },
+  },
+});
 </script>

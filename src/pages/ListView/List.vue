@@ -1,148 +1,323 @@
 <template>
-  <div class="px-5 pb-16 text-base flex flex-col overflow-y-hidden">
-    <div class="flex px-3">
-      <div class="py-4 mr-3 w-7" v-if="hasImage"></div>
+  <div class="text-base flex flex-col overflow-hidden">
+    <!-- Title Row -->
+    <div
+      class="flex items-center"
+      :style="{
+        paddingRight: dataSlice.length > 13 ? 'var(--w-scrollbar)' : '',
+      }"
+    >
+      <div
+        v-if="!isSelectionMode"
+        class="w-8 text-end me-2 text-gray-700 dark:text-gray-400"
+      >
+        #
+      </div>
+      <div v-else class="w-8 flex justify-end me-2">
+        <Check
+          :df="{
+            fieldtype: 'Check',
+            fieldname: 'selectAll',
+            label: '',
+          }"
+          :show-label="false"
+          :value="isAllSelected"
+          @change="toggleSelectAll"
+        />
+      </div>
       <Row
-        class="flex-1 text-gray-700"
-        :columnCount="columns.length"
+        class="flex-1 text-gray-700 dark:text-gray-400 h-row-mid"
+        :column-count="columns.length"
         gap="1rem"
       >
         <div
-          v-for="column in columns"
+          v-for="(column, i) in columns"
           :key="column.label"
-          class="py-4 truncate"
-          :class="
-            ['Float', 'Currency'].includes(column.fieldtype) ? 'text-right' : ''
+          class="
+            overflow-x-auto
+            no-scrollbar
+            whitespace-nowrap
+            h-row
+            items-center
+            flex
           "
+          :class="{
+            'ms-auto': isNumeric(column.fieldtype),
+            'pe-4': i === columns.length - 1,
+          }"
         >
           {{ column.label }}
         </div>
       </Row>
     </div>
-    <div class="overflow-y-auto" v-if="data.length !== 0">
-      <div
-        class="px-3 flex hover:bg-gray-100 rounded-md"
-        v-for="doc in data"
-        :key="doc.name"
-      >
-        <div class="w-7 py-4 mr-3" v-if="hasImage">
-          <Avatar :imageURL="doc.image" :label="doc.name" />
+    <hr class="dark:border-gray-800" />
+
+    <!-- Data Rows -->
+    <div
+      v-if="dataSlice.length !== 0"
+      class="
+        overflow-y-auto
+        dark:dark-scroll
+        custom-scroll custom-scroll-thumb1
+      "
+    >
+      <div v-for="(row, i) in dataSlice" :key="(row.name as string)">
+        <!-- Row Content -->
+        <div class="flex hover:bg-gray-50 dark:hover:bg-gray-850 items-center">
+          <div
+            v-if="!isSelectionMode"
+            class="w-8 text-end me-2 text-gray-700 dark:text-gray-400"
+          >
+            {{ i + pageStart + 1 }}
+          </div>
+          <div v-else class="w-8 flex justify-end me-2">
+            <Check
+              :df="{
+                fieldtype: 'Check',
+                fieldname: 'selectItem',
+                label: '',
+              }"
+              :show-label="false"
+              :value="selectedItems.includes(row.name as string)"
+              @change="toggleItemSelection(row.name as string)"
+            />
+          </div>
+
+          <Row
+            gap="1rem"
+            class="
+              cursor-pointer
+              text-gray-900
+              dark:text-gray-300
+              flex-1
+              h-row-mid
+            "
+            :column-count="columns.length"
+            @click="isSelectionMode ? null : $emit('openDoc', row.name)"
+          >
+            <ListCell
+              v-for="(column, c) in columns"
+              :key="column.label"
+              :class="{
+                'text-end': isNumeric(column.fieldtype),
+                'pe-4': c === columns.length - 1,
+              }"
+              :row="(row as RenderData)"
+              :column="column"
+              @status-found="handleStatusFound"
+            />
+          </Row>
         </div>
-        <Row
-          gap="1rem"
-          class="cursor-pointer text-gray-900 flex-1"
-          @click.native="openForm(doc)"
-          :columnCount="columns.length"
-        >
-          <ListCell
-            v-for="column in columns"
-            :key="column.label"
-            :class="{
-              'text-right': ['Float', 'Currency'].includes(column.fieldtype)
-            }"
-            :doc="doc"
-            :column="column"
-          ></ListCell>
-        </Row>
+        <hr
+          v-if="!(i === dataSlice.length - 1 && i > 13)"
+          class="dark:border-gray-800"
+        />
       </div>
     </div>
-    <div v-else class="flex flex-col items-center justify-center my-auto">
-      <img src="@/assets/img/list-empty-state.svg" alt="" class="w-24" />
-      <p class="my-3 text-gray-800">No {{ meta.label || meta.name }} found</p>
-      <Button type="primary" class="text-white" @click="$emit('makeNewDoc')">
-        Create a new {{ meta.label || meta.name }}
+
+    <!-- Pagination Footer -->
+    <div v-if="data?.length" class="mt-auto">
+      <hr class="dark:border-gray-800" />
+      <Paginator
+        :item-count="data.length"
+        class="px-4"
+        @index-change="setPageIndices"
+      />
+    </div>
+
+    <!-- Empty State -->
+    <div
+      v-if="!data?.length"
+      class="flex flex-col items-center justify-center my-auto"
+    >
+      <img src="../../assets/img/list-empty-state.svg" alt="" class="w-24" />
+      <p class="my-3 text-gray-800 dark:text-gray-200">
+        {{ t`No entries found` }}
+      </p>
+      <Button v-if="canCreate" type="primary" @click="$emit('makeNewDoc')">
+        {{ t`Make Entry` }}
       </Button>
     </div>
   </div>
 </template>
-<script>
-import frappe from 'frappejs';
-import Row from '@/components/Row';
-import ListCell from './ListCell';
-import Avatar from '@/components/Avatar';
-import { openQuickEdit, routeTo } from '@/utils';
-import Button from '@/components/Button';
+<script lang="ts">
+import { ListViewSettings, RenderData } from 'fyo/model/types';
+import { cloneDeep } from 'lodash';
+import Button from 'src/components/Button.vue';
+import Check from 'src/components/Controls/Check.vue';
+import Paginator from 'src/components/Paginator.vue';
+import Row from 'src/components/Row.vue';
+import { fyo } from 'src/initFyo';
+import { isNumeric } from 'src/utils';
+import { QueryFilter } from 'utils/db/types';
+import { PropType, defineComponent, toRaw } from 'vue';
+import ListCell from './ListCell.vue';
 
-export default {
+export default defineComponent({
   name: 'List',
-  props: ['listConfig', 'filters'],
   components: {
     Row,
     ListCell,
-    Avatar,
-    Button
+    Button,
+    Check,
+    Paginator,
   },
-  watch: {
-    listConfig(oldValue, newValue) {
-      if (oldValue.doctype !== newValue.doctype) {
-        this.setupColumnsAndData();
-      }
-    }
+  props: {
+    listConfig: {
+      type: Object as PropType<ListViewSettings | undefined>,
+      default: () => ({ columns: [] }),
+    },
+    filters: {
+      type: Object as PropType<QueryFilter>,
+      default: () => ({}),
+    },
+    schemaName: { type: String, required: true },
+    canCreate: Boolean,
+    isSelectionMode: Boolean,
   },
+  emits: ['openDoc', 'makeNewDoc', 'updatedData', 'selected-items-changed'],
   data() {
     return {
-      data: []
+      data: [] as RenderData[],
+      pageStart: 0,
+      pageEnd: 0,
+      statusMap: {} as Record<string, string>,
+      selectedItems: [] as string[],
     };
   },
   computed: {
+    dataSlice() {
+      return this.data.slice(this.pageStart, this.pageEnd);
+    },
+    count() {
+      return this.pageEnd - this.pageStart + 1;
+    },
+    isAllSelected(): boolean {
+      return (
+        this.data.length > 0 && this.selectedItems.length === this.data.length
+      );
+    },
     columns() {
-      return this.prepareColumns();
-    },
-    meta() {
-      return frappe.getMeta(this.listConfig.doctype);
-    },
-    hasImage() {
-      return this.meta.hasField('image');
-    }
-  },
-  async mounted() {
-    await this.setupColumnsAndData();
-    frappe.db.on(`change:${this.listConfig.doctype}`, () => {
-      this.updateData();
-    });
-  },
-  methods: {
-    async setupColumnsAndData() {
-      this.doctype = this.listConfig.doctype;
-      await this.updateData();
-    },
-    openForm(doc) {
-      if (this.listConfig.formRoute) {
-        routeTo(this.listConfig.formRoute(doc.name));
-        return;
+      let columns = this.listConfig?.columns ?? [];
+
+      if (columns.length === 0) {
+        columns = fyo.schemaMap[this.schemaName]?.quickEditFields ?? [];
+        columns = [...new Set(['name', ...columns])];
       }
-      openQuickEdit({
-        doctype: this.doctype,
-        name: doc.name
-      });
-    },
-    async updateData(filters) {
-      if (!filters) filters = this.getFilters();
-      this.data = await frappe.db.getAll({
-        doctype: this.doctype,
-        fields: ['*'],
-        filters,
-        orderBy: 'creation'
-      });
-    },
-    getFilters() {
-      let filters = {};
-      Object.assign(filters, this.listConfig.filters || {});
-      Object.assign(filters, this.filters);
-      return filters;
-    },
-    prepareColumns() {
-      return this.listConfig.columns
-        .map(col => {
-          if (typeof col === 'string') {
-            const field = this.meta.getField(col);
-            if (!field) return null;
-            return field;
+
+      return columns
+        .map((fieldname) => {
+          if (typeof fieldname === 'object') {
+            return fieldname;
           }
-          return col;
+
+          return fyo.getField(this.schemaName, fieldname);
         })
         .filter(Boolean);
-    }
-  }
-};
+    },
+  },
+  watch: {
+    async schemaName(oldValue, newValue) {
+      if (oldValue === newValue) {
+        return;
+      }
+
+      await this.updateData();
+    },
+  },
+  async mounted() {
+    await this.updateData();
+    this.setUpdateListeners();
+  },
+  methods: {
+    handleStatusFound({ rowId, status }: { rowId: string; status: string }) {
+      this.statusMap[rowId] = status;
+    },
+    isNumeric,
+    setPageIndices({ start, end }: { start: number; end: number }) {
+      this.pageStart = start;
+      this.pageEnd = end;
+    },
+    setUpdateListeners() {
+      if (!this.schemaName) {
+        return;
+      }
+
+      const listener = async () => {
+        await this.updateData();
+      };
+
+      if (fyo.schemaMap[this.schemaName]?.isSubmittable) {
+        fyo.doc.observer.on(`submit:${this.schemaName}`, listener);
+        fyo.doc.observer.on(`revert:${this.schemaName}`, listener);
+      }
+
+      fyo.doc.observer.on(`sync:${this.schemaName}`, listener);
+      fyo.db.observer.on(`delete:${this.schemaName}`, listener);
+      fyo.doc.observer.on(`rename:${this.schemaName}`, listener);
+    },
+    async updateData(filters?: Record<string, unknown>) {
+      const baseFilters = cloneDeep(toRaw(this.filters));
+      filters = cloneDeep({ ...baseFilters, ...filters });
+
+      let statusFilter: [string, string] | undefined;
+
+      if ('status' in filters) {
+        statusFilter = filters['status'] as [string, string];
+      }
+
+      const isStatusFilter =
+        Array.isArray(statusFilter) && statusFilter[0] === 'like';
+      if (isStatusFilter) {
+        delete filters['status'];
+      }
+
+      const orderBy = ['created'];
+      if (fyo.db.fieldMap[this.schemaName]['date']) {
+        orderBy.unshift('date');
+      }
+
+      const tableData = await fyo.db.getAll(this.schemaName, {
+        fields: ['*'],
+        filters: filters as QueryFilter,
+        orderBy,
+      });
+
+      let filteredData = tableData;
+
+      if (isStatusFilter && statusFilter?.[1]) {
+        const lowercaseStatus = String(statusFilter[1]).toLowerCase();
+
+        const matchedNames = Object.entries(this.statusMap)
+          .filter((entry) => entry[1].toLowerCase() === lowercaseStatus)
+          .map((entry) => entry[0]);
+
+        filteredData = tableData.filter((row) =>
+          matchedNames.includes(String(row.name))
+        );
+      }
+
+      this.data = filteredData.map((d) => ({
+        ...d,
+        schema: fyo.schemaMap[this.schemaName],
+      })) as RenderData[];
+      this.$emit('updatedData', filters);
+    },
+    toggleItemSelection(itemName: string) {
+      const index = this.selectedItems.indexOf(itemName);
+      if (index > -1) {
+        this.selectedItems.splice(index, 1);
+      } else {
+        this.selectedItems.push(itemName);
+      }
+      this.$emit('selected-items-changed', this.selectedItems);
+    },
+    toggleSelectAll(checked: boolean) {
+      this.selectedItems = checked
+        ? this.data.map((row) => row.name as string)
+        : [];
+      this.$emit('selected-items-changed', this.selectedItems);
+    },
+  },
+});
 </script>
